@@ -449,6 +449,8 @@ func PrettifyName(name string) string {
 
 // entryFields defines which label suffixes are entry-specific configuration fields
 var entryFields = map[string]bool{
+	"proxy.enable":            true,
+	"proxy.subdomain":         true,
 	"service_port":            true,
 	"protocol":                true,
 	"path":                    true,
@@ -570,20 +572,27 @@ func parseEntry(labels map[string]string, name string, displayName string, defau
 		}
 	}
 
+	var proxyEnabled *bool
+	if value, ok := labels[prefix+"proxy.enable"]; ok {
+		v := value == "true"
+		proxyEnabled = &v
+	}
 	return Entry{
-		Name:          name,
-		Title:         title,
-		Protocol:      getLabel(labels, prefix+"protocol", "http"),
-		Port:          getLabel(labels, prefix+"service_port", ""),
-		Path:          getLabel(labels, prefix+"path", "/"),
-		UIType:        getLabel(labels, prefix+"ui_type", "url"),
-		AllUsers:      getLabel(labels, prefix+"all_users", "true") == "true",
-		Icon:          getLabel(labels, prefix+"icon", iconFallback),
-		FileTypes:     fileTypes,
-		NoDisplay:     getLabel(labels, prefix+"no_display", "false") == "true",
-		Control:       control,
-		Redirect:      getLabel(labels, prefix+"redirect", ""),
-		ForceExternal: getLabel(labels, prefix+"redirect_force_external", "false") == "true",
+		ProxyEnabled:   proxyEnabled,
+		ProxySubdomain: labels[prefix+"proxy.subdomain"],
+		Name:           name,
+		Title:          title,
+		Protocol:       getLabel(labels, prefix+"protocol", "http"),
+		Port:           getLabel(labels, prefix+"service_port", ""),
+		Path:           getLabel(labels, prefix+"path", "/"),
+		UIType:         getLabel(labels, prefix+"ui_type", "url"),
+		AllUsers:       getLabel(labels, prefix+"all_users", "true") == "true",
+		Icon:           getLabel(labels, prefix+"icon", iconFallback),
+		FileTypes:      fileTypes,
+		NoDisplay:      getLabel(labels, prefix+"no_display", "false") == "true",
+		Control:        control,
+		Redirect:       getLabel(labels, prefix+"redirect", ""),
+		ForceExternal:  getLabel(labels, prefix+"redirect_force_external", "false") == "true",
 	}
 }
 

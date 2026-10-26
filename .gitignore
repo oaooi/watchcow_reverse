@@ -47,3 +47,6 @@ go.work
 # User configuration overrides
 **/.env
 !**/.env.example
+
+/fnos-app/app/watchcow-r
+/*.fpk

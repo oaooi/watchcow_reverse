@@ -1,5 +1,42 @@
 [
   {
+    "stepTitle": "Watchcow_R 反向代理",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "按 Docker 容器名生成子域名，复用飞牛 HTTP/HTTPS 端口及证书管理。默认不会启用系统扩展；开启下方扩展选项需要一次 Web 服务重启，扩展期间暂停 Nginx 配置自恢复。首次接管会备份旧 WatchCow 配置并停止旧守护程序，不停止业务容器。"
+      },
+      {
+        "type": "text",
+        "field": "WATCHCOW_R_DOMAIN",
+        "label": "基础域名",
+        "helpText": "例如 nas.example.com，不包含协议、端口或 *。请先将 *.基础域名 解析到 NAS。",
+        "rules": [
+          {
+            "required": true,
+            "message": "请填写基础域名"
+          },
+          {
+            "pattern": "^[a-zA-Z0-9.-]+\\.[a-zA-Z0-9.-]+$",
+            "message": "请输入有效域名"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "WATCHCOW_R_NATIVE_EXTENSIONS",
+        "label": "允许 Nginx 扩展模式（true/false）",
+        "helpText": "默认 false，不改系统。此版本飞牛实现反代需要输入 true：将重启一次飞牛 Web 服务，扩展期间暂停 Nginx 配置自恢复；卸载恢复。Docker 业务容器不重启。",
+        "rules": [
+          {
+            "pattern": "^(true|false)$",
+            "message": "请输入 true 或 false"
+          }
+        ]
+      }
+    ]
+  },
+  {
     "stepTitle": "图标 CDN 配置",
     "items": [
       {

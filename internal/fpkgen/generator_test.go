@@ -190,3 +190,21 @@ func TestExtractFirstPortChoosesBindingDeterministically(t *testing.T) {
 		t.Errorf("extractFirstPort() = %q, want deterministic lowest host port", got)
 	}
 }
+
+func TestProxyLabelsAreEntryFields(t *testing.T) {
+	entries := ParseEntries(map[string]string{"watchcow.proxy.enable": "false", "watchcow.proxy.subdomain": "emby", "watchcow.service_port": "8096", "watchcow.admin.service_port": "8080", "watchcow.admin.proxy.enable": "true", "watchcow.admin.proxy.subdomain": "admin-ui"}, "Emby", "", "")
+	if len(entries) != 2 {
+		t.Fatalf("proxy must not become a spurious named entry: %+v", entries)
+	}
+	for _, e := range entries {
+		if e.ProxyEnabled == nil {
+			t.Fatal("proxy enable not parsed")
+		}
+		if e.Name == "" && (*e.ProxyEnabled || e.ProxySubdomain != "emby") {
+			t.Fatal(e)
+		}
+		if e.Name == "admin" && (!*e.ProxyEnabled || e.ProxySubdomain != "admin-ui") {
+			t.Fatal(e)
+		}
+	}
+}

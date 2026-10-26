@@ -1,5 +1,8 @@
 #!/bin/bash
-
-### This script is called after the user upgrades the application.
-
-exit 0
+set -e
+"${TRIM_APPDEST}/watchcow-r" --mode init
+cat > "${TRIM_APPDEST}/ui/index.cgi" << EOFCGI
+#!/bin/sh
+exec "${TRIM_APPDEST}/watchcow-r" --mode cgi --cgi-app watchcow-r --socket "${TRIM_PKGVAR}/watchcow.sock"
+EOFCGI
+chmod 755 "${TRIM_APPDEST}/ui/index.cgi"

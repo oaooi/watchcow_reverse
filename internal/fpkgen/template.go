@@ -136,10 +136,12 @@ func GenerateUIConfigJSON(data *TemplateData) ([]byte, error) {
 		}
 
 		port := entry.Port
+		protocol := entry.Protocol
 		urlPath := entry.Path
 
 		// If redirect mode is enabled, modify port and URL
 		if entry.Redirect != "" {
+			protocol = ""
 			// Remove port (omitempty will exclude it from JSON)
 			port = ""
 			// Build CGI URL: /cgi/ThirdParty/<AppName>/index.cgi/redirect/<appname>/<entry>[<path>]
@@ -154,12 +156,11 @@ func GenerateUIConfigJSON(data *TemplateData) ([]byte, error) {
 			}
 			urlPath = cgiPath
 		}
-
 		config.URL[entry.FullName] = &UIConfigEntry{
 			Title:     entry.Title,
 			Icon:      entry.Icon,
 			Type:      entry.UIType,
-			Protocol:  entry.Protocol,
+			Protocol:  protocol,
 			Port:      port,
 			URL:       urlPath,
 			AllUsers:  entry.AllUsers,
@@ -199,6 +200,7 @@ type EntryData struct {
 
 // TemplateData holds all data needed for template rendering
 type TemplateData struct {
+	Binary string
 	// Identity
 	AppName     string
 	Version     string
@@ -240,6 +242,7 @@ type TemplateData struct {
 // NewTemplateData creates TemplateData from AppConfig
 func NewTemplateData(config *AppConfig) *TemplateData {
 	data := &TemplateData{
+		Binary:        "watchcow",
 		AppName:       config.AppName,
 		Version:       config.Version,
 		DisplayName:   config.DisplayName,
@@ -257,6 +260,9 @@ func NewTemplateData(config *AppConfig) *TemplateData {
 		Environment:   config.Environment,
 		RestartPolicy: config.RestartPolicy,
 		Icon:          config.Icon,
+	}
+	if os.Getenv("WATCHCOW_R_ACTIVE") == "1" {
+		data.Binary = "watchcow-r"
 	}
 
 	// Set defaults

@@ -1283,3 +1283,18 @@ func TestUpdateContainerStatePublishesCompleteSnapshots(t *testing.T) {
 		t.Errorf("concurrent updates lost state: %+v", state)
 	}
 }
+
+func TestAdoptExistingDoesNotReinstallLegacyPackage(t *testing.T) {
+	installer := &fakeAppInstaller{installed: true}
+	m := &Monitor{AdoptExisting: true, installer: installer, registry: app.NewRegistry(), labelRevisions: map[string]string{}, labelOwners: map[string]string{}, pendingUninstalls: map[string]bool{}, labelRevisionsPath: filepath.Join(t.TempDir(), "labels.json")}
+	state := &ContainerState{ContainerID: "ctr", ContainerName: "EmbyServer", Image: "emby:latest", State: "running", Labels: map[string]string{"watchcow.enable": "true", "watchcow.service_port": "8096"}}
+	m.containers.Store("ctr", state)
+	revision := labelRevisionForState(state)
+	m.processContainerStart(context.Background(), &AppOperation{ContainerID: "ctr", ContainerName: state.ContainerName, Labels: state.Labels, LabelRevision: revision})
+	if installer.installCalls != 0 || len(installer.uninstallCalls) != 0 {
+		t.Fatal("legacy desktop package was reinstalled")
+	}
+	if m.Registry().Get("watchcow.embyserver") == nil || !m.isLabelRevisionApplied("watchcow.embyserver", revision) {
+		t.Fatal("legacy ownership was not adopted")
+	}
+}

@@ -104,19 +104,21 @@ type RedirectConfig struct {
 
 // Entry represents a UI entry point for an app
 type Entry struct {
-	Name          string        // Entry identifier (empty for default entry)
-	Title         string        // Display title
-	Protocol      string        // http or https
-	Port          string        // Service port
-	Path          string        // URL path
-	UIType        string        // "url" (new tab) or "iframe" (desktop window)
-	AllUsers      bool          // Access permission (true = all users)
-	Icon          string        // Icon source: URL (file:// or http://) from labels, or base64 data from dashboard
-	FileTypes     []string      // Supported file types for right-click menu
-	NoDisplay     bool          // Hide from desktop (only show in right-click menu)
-	Control       *EntryControl // Permission control settings
-	Redirect      string        // External redirect host for CGI mode
-	ForceExternal bool          // Skip local network detection, always redirect to external URL
+	ProxyEnabled   *bool         // nil = automatic HTTP detection
+	ProxySubdomain string        // optional single DNS label
+	Name           string        // Entry identifier (empty for default entry)
+	Title          string        // Display title
+	Protocol       string        // http or https
+	Port           string        // Service port
+	Path           string        // URL path
+	UIType         string        // "url" (new tab) or "iframe" (desktop window)
+	AllUsers       bool          // Access permission (true = all users)
+	Icon           string        // Icon source: URL (file:// or http://) from labels, or base64 data from dashboard
+	FileTypes      []string      // Supported file types for right-click menu
+	NoDisplay      bool          // Hide from desktop (only show in right-click menu)
+	Control        *EntryControl // Permission control settings
+	Redirect       string        // External redirect host for CGI mode
+	ForceExternal  bool          // Skip local network detection, always redirect to external URL
 }
 
 // GetRedirectConfig returns RedirectConfig if redirect is enabled, nil otherwise

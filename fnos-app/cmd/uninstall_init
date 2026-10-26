@@ -1,5 +1,12 @@
 #!/bin/bash
-
-### This script is called after the user uninstalls the application.
-
-exit 0
+set -e
+# fnOS normally stops the application first. Refuse to restore files while the
+# new daemon can still reconcile them.
+if [ -f "${TRIM_PKGVAR}/app.pid" ]; then
+    pid=$(cat "${TRIM_PKGVAR}/app.pid")
+    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+        echo "请先停止 Watchcow_R 再卸载" >&2
+        exit 1
+    fi
+fi
+"${TRIM_APPDEST}/watchcow-r" --mode rollback

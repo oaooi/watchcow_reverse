@@ -172,10 +172,10 @@ func TestDashboardHandler_Dashboard(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	if !strings.Contains(body, "WatchCow 控制面板") {
+	if !strings.Contains(body, "Watchcow_R 控制面板") {
 		t.Error("response should contain dashboard title")
 	}
-	if !strings.Contains(body, "WatchCow") {
+	if !strings.Contains(body, "Watchcow_R") {
 		t.Error("response should contain WatchCow branding")
 	}
 	// Container list is loaded via HTMX into #main-content

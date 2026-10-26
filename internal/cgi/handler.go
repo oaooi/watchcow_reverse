@@ -7,12 +7,13 @@ import (
 	"net/http/cgi"
 	"net/http/httputil"
 	"net/url"
+	"path"
 	"strings"
 )
 
 // RunCGI runs the CGI handler that proxies requests to the Unix socket server.
 // It uses Go's standard library cgi and httputil packages.
-func RunCGI(socketPath string) {
+func RunCGI(socketPath string, scope string) {
 	// Create reverse proxy to Unix socket
 	proxy := newUnixSocketProxy(socketPath)
 
@@ -29,6 +30,10 @@ func RunCGI(socketPath string) {
 			}
 		}
 		r.URL.Path = path
+		if !Allowed(scope, path, r.Method) {
+			http.Error(w, "此应用入口无权访问管理功能", http.StatusForbidden)
+			return
+		}
 		r.RequestURI = path
 		if r.URL.RawQuery != "" {
 			r.RequestURI = path + "?" + r.URL.RawQuery
@@ -37,6 +42,22 @@ func RunCGI(socketPath string) {
 		// Forward to Unix socket server
 		proxy.ServeHTTP(w, r)
 	}))
+}
+
+// Child packages are often visible to all NAS users. Bind their dispatcher to
+// that package's launch routes so it cannot expose the admin dashboard/API.
+// Scope is supplied by the installed script, never by an HTTP header/query.
+func Allowed(scope, requestPath, method string) bool {
+	if scope == "watchcow-r" {
+		return true
+	}
+	if scope == "" || strings.ContainsAny(scope, "/\\") || path.Clean(requestPath) != requestPath {
+		return false
+	}
+	if method != http.MethodGet && method != http.MethodHead {
+		return false
+	}
+	return strings.HasPrefix(requestPath, "/proxy/"+scope+"/") || strings.HasPrefix(requestPath, "/redirect/"+scope+"/")
 }
 
 // newUnixSocketProxy creates a reverse proxy that connects to a Unix socket.

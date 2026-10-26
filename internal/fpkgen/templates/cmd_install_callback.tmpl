@@ -4,7 +4,7 @@
 # Create CGI script for redirect mode
 cat > "${TRIM_APPDEST}/ui/index.cgi" << 'EOFCGI'
 #!/bin/bash
-exec "{{.WatchCowAppDest}}/watchcow" --mode cgi --socket "{{.WatchCowPkgVar}}/watchcow.sock"
+exec "{{.WatchCowAppDest}}/{{.Binary}}" --mode cgi --cgi-app "{{.AppName}}" --socket "{{.WatchCowPkgVar}}/watchcow.sock"
 EOFCGI
 chmod +x "${TRIM_APPDEST}/ui/index.cgi"
 {{end}}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -114,6 +115,9 @@ type AppOperation struct {
 
 // Monitor watches Docker containers and manages fnOS app installation
 type Monitor struct {
+	// AdoptExisting avoids a destructive reinstall on the first run of the
+	// independently installed fork. Later label changes still trigger rebuilds.
+	AdoptExisting   bool
 	cli             *client.Client
 	generator       *fpkgen.Generator
 	installer       appInstaller
@@ -879,7 +883,7 @@ func (m *Monitor) processContainerStartWithMode(ctx context.Context, op *AppOper
 			m.processDashboardReinstall(ctx, op)
 			return
 		}
-		if op.StoredConfig == nil && op.LabelRevision != "" && !m.isLabelRevisionApplied(appName, op.LabelRevision) {
+		if op.StoredConfig == nil && op.LabelRevision != "" && !m.isLabelRevisionApplied(appName, op.LabelRevision) && !(m.AdoptExisting && !m.hasLabelRevision(appName)) {
 			op.AppName = appName
 			m.processDashboardReinstall(ctx, op)
 			return
@@ -1896,6 +1900,73 @@ func (m *Monitor) Stop() {
 // Registry returns the app registry for external access (e.g., by server)
 func (m *Monitor) Registry() *app.Registry {
 	return m.registry
+}
+
+// Inventory reads Docker without generating packages or changing containers.
+func (m *Monitor) Inventory(ctx context.Context) ([]ContainerInfo, error) {
+	containers, err := m.cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil, err
+	}
+	var result []ContainerInfo
+	for _, ctr := range containers {
+		s := containerStateFromSummary(ctr)
+		result = append(result, ContainerInfo{ID: s.ContainerID, Name: s.ContainerName, Image: s.Image, State: s.State, Ports: s.WebPorts, IdentityPorts: s.Ports, Labels: s.Labels, NetworkMode: s.NetworkMode})
+	}
+	return result, nil
+}
+
+// AdoptApp seeds existing stopped desktop apps as well as running ones. This
+// does not start the fnOS package or its business container.
+func (m *Monitor) AdoptApp(a *app.App) { m.registry.Register(a) }
+
+// ResolveWebUpstream selects an actual published TCP binding. It never treats
+// a UDP mapping or an arbitrary container-supplied hostname as a Web upstream.
+func (m *Monitor) ResolveWebUpstream(ctx context.Context, a *app.App, e app.Entry) (string, error) {
+	ctr, err := m.cli.ContainerInspect(ctx, a.ContainerID)
+	if err != nil {
+		return "", err
+	}
+	protocol := e.Protocol
+	if protocol == "" {
+		protocol = "http"
+	}
+	if ctr.HostConfig != nil && ctr.HostConfig.NetworkMode == "host" {
+		return protocol + "://127.0.0.1:" + e.Port, nil
+	}
+	if ctr.NetworkSettings != nil {
+		var addresses []string
+		for exposed, bindings := range ctr.NetworkSettings.Ports {
+			if exposed.Proto() != "tcp" {
+				continue
+			}
+			for _, b := range bindings {
+				if b.HostPort != e.Port {
+					continue
+				}
+				ip := b.HostIP
+				if ip == "" || ip == "0.0.0.0" {
+					ip = "127.0.0.1"
+				}
+				if ip == "::" {
+					ip = "::1"
+				}
+				if net.ParseIP(ip) != nil {
+					addresses = append(addresses, net.JoinHostPort(ip, b.HostPort))
+				}
+			}
+		}
+		sort.Strings(addresses)
+		for _, addr := range addresses {
+			if strings.HasPrefix(addr, "127.0.0.1:") {
+				return protocol + "://" + addr, nil
+			}
+		}
+		if len(addresses) > 0 {
+			return protocol + "://" + addresses[0], nil
+		}
+	}
+	return "", fmt.Errorf("没有找到主机端口 %s 的 TCP 映射，请按 WatchCow 规则填写映射后的主机端口", e.Port)
 }
 
 // registerAppFromConfig creates and registers an App instance from fpkgen.AppConfig

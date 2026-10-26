@@ -13,7 +13,7 @@ type DashboardMounter interface {
 }
 
 // NewRouter creates a new chi router with handlers mounted
-func NewRouter(redirectHandler http.Handler, dashboardHandler DashboardMounter) chi.Router {
+func NewRouter(redirectHandler http.Handler, dashboardHandler DashboardMounter, extras ...func(chi.Router)) chi.Router {
 	r := chi.NewRouter()
 
 	// Middleware
@@ -22,6 +22,9 @@ func NewRouter(redirectHandler http.Handler, dashboardHandler DashboardMounter) 
 	// Mount redirect handler at /redirect
 	// Path format: /redirect/<appname>/<entry>[/<path...>]
 	r.Mount("/redirect", redirectHandler)
+	for _, mount := range extras {
+		mount(r)
+	}
 
 	// Mount dashboard handler at /
 	if dashboardHandler != nil {

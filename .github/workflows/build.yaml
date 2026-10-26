@@ -47,28 +47,33 @@ jobs:
           sed -i "s/^platform.*=.*/platform        = ${{ matrix.platform }}/" fnos-app/manifest
           cat fnos-app/manifest
 
+      - name: Test
+        run: |
+          go test -race ./...
+          go vet ./...
+
       - name: Build binary
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} go build -trimpath -ldflags "-s -w" -o fnos-app/app/watchcow ./cmd/watchcow
-          chmod +x fnos-app/app/watchcow
+          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} go build -trimpath -ldflags "-s -w" -o fnos-app/app/watchcow-r ./cmd/watchcow
+          chmod +x fnos-app/app/watchcow-r
           chmod +x fnos-app/cmd/*
 
       - name: Download fnpack
         run: |
-          curl -L -o /tmp/fnpack https://static2.fnnas.com/fnpack/fnpack-1.2.0-linux-amd64
+          curl --fail --location --retry 3 -o /tmp/fnpack https://static2.fnnas.com/fnpack/fnpack-1.2.0-linux-amd64
           chmod +x /tmp/fnpack
 
       - name: Build fpk package
         run: |
           cd fnos-app
           /tmp/fnpack build
-          mv watchcow.fpk ../watchcow-${{ matrix.suffix }}.fpk
+          mv watchcow-r.fpk ../Watchcow_R-${{ matrix.suffix }}.fpk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: watchcow-${{ matrix.suffix }}-package
-          path: watchcow-${{ matrix.suffix }}.fpk
+          name: Watchcow_R-${{ matrix.suffix }}-package
+          path: Watchcow_R-${{ matrix.suffix }}.fpk
 
   release:
     needs: build
@@ -86,6 +91,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            watchcow-x86.fpk
-            watchcow-arm.fpk
+            Watchcow_R-x86.fpk
+            Watchcow_R-arm.fpk
           generate_release_notes: true
+          prerelease: true
