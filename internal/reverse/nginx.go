@@ -26,10 +26,11 @@ type Listener struct {
 	TLS     bool
 }
 type Layout struct {
-	Listeners  []Listener
-	TLS        string
-	ForceHTTPS bool
-	HTTPSPort  string
+	Listeners           []Listener
+	TLS                 string
+	ForceHTTPS          bool
+	HTTPSPort           string
+	CertificateRevision string
 }
 type Route struct {
 	Mode        string `json:"-"`
@@ -197,16 +198,114 @@ func renderServer(l Layout, routes []Route, disabled bool) ([]byte, error) {
 
 type Native struct {
 	// Used only by the isolated test harness, which starts Nginx directly.
-	Extended bool
-	Main     string
-	Binary   string
-	Dir      string
-	Run      func(context.Context, string, ...string) error
+	Extended     bool
+	Main         string
+	Binary       string
+	Dir          string
+	Run          func(context.Context, string, ...string) error
+	Certificates *CertificateFiles
 }
 
 type pendingNative struct {
 	Main, Routes, NextRoutes []byte
 	RoutesExisted            bool
+	Files                    []nativeFileChange `json:",omitempty"`
+}
+
+type nativeFileChange struct {
+	Path          string
+	Before, After []byte
+	Existed       bool
+	Mode          uint32
+	DeleteAfter   bool
+}
+
+func nativeChange(path string, after []byte, mode os.FileMode, deleteAfter bool) (nativeFileChange, error) {
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nativeFileChange{}, err
+	}
+	c := nativeFileChange{Path: path, Before: b, After: after, Existed: err == nil, Mode: uint32(mode.Perm()), DeleteAfter: deleteAfter}
+	if info, e := os.Stat(path); e == nil {
+		c.Mode = uint32(info.Mode().Perm())
+	}
+	return c, nil
+}
+
+func (c nativeFileChange) changed() bool {
+	return c.DeleteAfter && c.Existed || !c.DeleteAfter && (!c.Existed || !bytes.Equal(c.Before, c.After))
+}
+
+// Verify every file before changing any of them. Both sides of the durable
+// journal are accepted after a crash, but unrelated external edits are retained.
+func checkNativeChanges(changes []nativeFileChange, allowAfter bool) error {
+	for _, c := range changes {
+		b, err := os.ReadFile(c.Path)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		before := err == nil && c.Existed && bytes.Equal(b, c.Before) || os.IsNotExist(err) && !c.Existed
+		after := err == nil && c.After != nil && bytes.Equal(b, c.After) || os.IsNotExist(err) && c.DeleteAfter
+		if !before && !(allowAfter && after) {
+			return fmt.Errorf("Nginx 事务文件发生外部修改，保留文件: %s", c.Path)
+		}
+	}
+	return nil
+}
+
+func writeNativeChanges(changes []nativeFileChange, restore bool) error {
+	for _, c := range changes {
+		data := c.After
+		if restore {
+			if !c.Existed {
+				continue
+			}
+			data = c.Before
+		} else if data == nil && c.DeleteAfter {
+			continue
+		}
+		current, err := os.ReadFile(c.Path)
+		if err == nil && bytes.Equal(current, data) {
+			continue
+		}
+		if err := atomicWrite(c.Path, data, os.FileMode(c.Mode)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteNativeChanges(changes []nativeFileChange, restore bool) error {
+	for _, c := range changes {
+		if restore && c.Existed || !restore && !c.DeleteAfter {
+			continue
+		}
+		if err := os.Remove(c.Path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (n *Native) restoreNativeChanges(changes []nativeFileChange) error {
+	if err := checkNativeChanges(changes, true); err != nil {
+		return err
+	}
+	if err := writeNativeChanges(changes, true); err != nil {
+		return err
+	}
+	// Remove newly created includes before reload: otherwise Nginx could load
+	// the staged routes even though their files are deleted immediately after.
+	if err := deleteNativeChanges(changes, true); err != nil {
+		return err
+	}
+	if err := n.run("-t"); err != nil {
+		return err
+	}
+	if err := n.run("-s", "reload"); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (n *Native) recoverPending(path string) error {
@@ -220,6 +319,12 @@ func (n *Native) recoverPending(path string) error {
 	var p pendingNative
 	if err := json.Unmarshal(b, &p); err != nil {
 		return err
+	}
+	if len(p.Files) != 0 {
+		if err := n.restoreNativeChanges(p.Files); err != nil {
+			return err
+		}
+		return os.Remove(filepath.Join(n.Dir, "nginx.pending.json"))
 	}
 	main, err := os.ReadFile(n.Main)
 	if err != nil {
@@ -252,7 +357,8 @@ func (n *Native) recoverPending(path string) error {
 }
 
 func NewNative(dir string) *Native {
-	return &Native{Main: "/usr/trim/nginx/conf/nginx.conf", Binary: "/usr/trim/nginx/sbin/nginx", Dir: dir}
+	return &Native{Main: "/usr/trim/nginx/conf/nginx.conf", Binary: "/usr/trim/nginx/sbin/nginx", Dir: dir,
+		Certificates: &CertificateFiles{Gateway: "/usr/trim/etc/network_gateway_cert.conf", Store: "/usr/trim/etc/network_cert_all.conf"}}
 }
 func (n *Native) run(args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -348,8 +454,10 @@ func (n *Native) Layout() (Layout, error) {
 	return detectLayout(string(b))
 }
 
-// Apply changes only our server-level fragment, using the canonical main
-// configuration for validation. Failure restores the fragment and reloads.
+// Apply updates our route fragment and certificate mapping in one transaction.
+// The only main-config edit redirects the existing native certificate module
+// to the merged mapping; removal restores its vendor source. Private keys and
+// the vendor's certificate inventory/bindings are never modified.
 // A cross-process lock serializes lifecycle and daemon operations.
 func (n *Native) Apply(routes []Route, disabled, remove bool) error {
 	if err := os.MkdirAll(n.Dir, 0755); err != nil {
@@ -391,7 +499,9 @@ func (n *Native) Apply(routes []Route, disabled, remove bool) error {
 		return e
 	}
 	if _, e := os.Stat(path); disabled && len(routes) == 0 && os.IsNotExist(e) {
-		return nil
+		if _, certErr := os.Stat(filepath.Join(n.Dir, "certificates.owned.json")); os.IsNotExist(certErr) {
+			return nil
+		}
 	}
 
 	info, err := os.Stat(n.Main)
@@ -406,6 +516,10 @@ func (n *Native) Apply(routes []Route, disabled, remove bool) error {
 		return fmt.Errorf("conf.d/watchcow-r.conf 已存在外部配置，拒绝覆盖")
 	}
 	var nextRoutes []byte
+	nextMain, certChanges, certRevision, err := n.certificatePlan(main, routes, remove)
+	if err != nil {
+		return err
+	}
 	if remove {
 		nextRoutes = []byte("# Generated by Watchcow_R. Removed.\n")
 	} else {
@@ -413,12 +527,26 @@ func (n *Native) Apply(routes []Route, disabled, remove bool) error {
 		if e != nil {
 			return e
 		}
+		layout.CertificateRevision = certRevision
 		nextRoutes, err = renderServer(layout, routes, disabled)
 	}
 	if err != nil {
 		return err
 	}
-	if bytes.Equal(oldRoutes, nextRoutes) {
+	mainChange, err := nativeChange(n.Main, nextMain, info.Mode().Perm(), false)
+	if err != nil {
+		return err
+	}
+	routeChange, err := nativeChange(path, nextRoutes, 0644, remove)
+	if err != nil {
+		return err
+	}
+	changes := append(certChanges, mainChange, routeChange)
+	changed := false
+	for _, c := range changes {
+		changed = changed || c.changed()
+	}
+	if !changed {
 		return nil
 	}
 	if resume == nil {
@@ -438,20 +566,23 @@ func (n *Native) Apply(routes []Route, disabled, remove bool) error {
 	if err != nil || !bytes.Equal(current, main) {
 		return fmt.Errorf("Nginx 配置被其他进程修改，请重试")
 	}
-	pending, err := json.Marshal(pendingNative{Main: main, Routes: oldRoutes, NextRoutes: nextRoutes, RoutesExisted: routeErr == nil})
+	if err := checkNativeChanges(changes, false); err != nil {
+		return err
+	}
+	pending, err := json.Marshal(pendingNative{Main: main, Routes: oldRoutes, NextRoutes: nextRoutes, RoutesExisted: routeErr == nil, Files: changes})
 	if err != nil {
 		return err
 	}
 	if err := atomicWrite(filepath.Join(n.Dir, "nginx.pending.json"), pending, 0600); err != nil {
 		return err
 	}
-	if err := atomicWrite(path, nextRoutes, 0644); err != nil {
-		return err
+	applyErr := writeNativeChanges(changes, false)
+	if applyErr == nil {
+		applyErr = n.run("-t")
 	}
-	applyErr := n.run("-t")
 	if applyErr == nil {
 		current, e := os.ReadFile(n.Main)
-		if e != nil || !bytes.Equal(current, main) {
+		if e != nil || !bytes.Equal(current, nextMain) {
 			applyErr = fmt.Errorf("校验过程中 Nginx 主配置被外部修改")
 		}
 	}
@@ -459,36 +590,17 @@ func (n *Native) Apply(routes []Route, disabled, remove bool) error {
 		applyErr = n.run("-s", "reload")
 	}
 	if applyErr == nil {
-		applyErr = n.waitApplied(main, nextRoutes, oldRoutes)
+		applyErr = n.waitApplied(nextMain, nextRoutes, oldRoutes)
 	}
 	if applyErr != nil {
-		// Avoid overwriting a concurrent fnOS change during recovery.
-		current, readErr := os.ReadFile(n.Main)
-		if readErr != nil || !bytes.Equal(current, main) {
-			return fmt.Errorf("%w; 配置同时发生外部变更，保留备份等待人工恢复", applyErr)
-		}
-		var e2 error
-		if routeErr == nil {
-			e2 = atomicWrite(path, oldRoutes, 0644)
-		} else {
-			e2 = os.Remove(path)
-			if os.IsNotExist(e2) {
-				e2 = nil
-			}
-		}
-		e3 := n.run("-t")
-		if e3 == nil {
-			e3 = n.run("-s", "reload")
-		}
-		if e2 == nil && e3 == nil {
+		recovery := n.restoreNativeChanges(changes)
+		if recovery == nil {
 			_ = os.Remove(filepath.Join(n.Dir, "nginx.pending.json"))
 		}
-		return fmt.Errorf("应用失败并回退: %w (恢复文件=%v, 恢复检查=%v)", applyErr, e2, e3)
+		return fmt.Errorf("应用失败: %w (回退=%v)", applyErr, recovery)
 	}
-	if remove {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
+	if err := deleteNativeChanges(changes, false); err != nil {
+		return err
 	}
 	return os.Remove(filepath.Join(n.Dir, "nginx.pending.json"))
 }
