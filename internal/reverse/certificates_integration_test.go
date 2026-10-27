@@ -155,6 +155,71 @@ http {
 	for _, route := range routes {
 		verify(route.Host, wildSerial)
 	}
+	// Real per-host configuration must not leak locations into another app or
+	// the NAS. Exercise the user's raw root-location example over a TLS backend.
+	customBackend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"path": r.URL.Path, "query": r.URL.RawQuery, "host": r.Host, "proto": r.Header.Get("X-Forwarded-Proto"), "marker": r.Header.Get("X-Custom")})
+	}))
+	defer customBackend.Close()
+	routes[0].Nginx = fmt.Sprintf(`location / {
+proxy_pass %s/;
+proxy_redirect http:// https://;
+proxy_set_header Host $host:$server_port;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Host $http_host;
+proxy_set_header X-Forwarded-Port $server_port;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-Scheme $scheme;
+}
+error_page 497 https://$http_host$request_uri;`, customBackend.URL)
+	routes[1].CustomLocations = []CustomLocation{{Path: "/api/", Upstream: customBackend.URL + "/base/", Nginx: "proxy_set_header X-Custom structured; proxy_read_timeout 10s;"}}
+	if err := n.Apply(routes, false, false); err != nil {
+		t.Fatal(err)
+	}
+	request := func(host, path string) map[string]string {
+		t.Helper()
+		transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, ServerName: host}, DisableKeepAlives: true}
+		defer transport.CloseIdleConnections()
+		c := &http.Client{Transport: transport, Timeout: 3 * time.Second}
+		req, _ := http.NewRequest("GET", "https://127.0.0.1:5667"+path, nil)
+		req.Host = host + ":5667"
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var got map[string]string
+		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	got := request(routes[0].Host, "/original?x=a%20b")
+	if got["path"] != "/original" || got["host"] != routes[0].Host+":5667" || got["proto"] != "https" || got["query"] != "x=a%20b" {
+		t.Fatal("raw proxy configuration not applied", got)
+	}
+	got = request(routes[1].Host, "/api/example?x=1")
+	if got["path"] != "/base/example" || got["marker"] != "structured" || got["host"] != routes[1].Host+":5667" {
+		t.Fatal("custom location not isolated/applied", got)
+	}
+	// A directive accepted structurally but rejected by Nginx must restore all
+	// native files and keep the last working custom host serving requests.
+	workingMain := read(t, n.Main)
+	hostFile := filepath.Join(filepath.Dir(n.Main), "watchcow-r-hosts.conf")
+	workingHosts := read(t, hostFile)
+	bad := append([]Route(nil), routes...)
+	bad[0].Nginx += "\nunknown_watchcow_directive on;"
+	if err := n.Apply(bad, false, false); err == nil {
+		t.Fatal("invalid native directive accepted")
+	}
+	if string(read(t, n.Main)) != string(workingMain) || string(read(t, hostFile)) != string(workingHosts) {
+		t.Fatal("failed custom config changed working files")
+	}
+	got = request(routes[1].Host, "/api/still-working")
+	if got["marker"] != "structured" {
+		t.Fatal("working route lost after failed apply")
+	}
 	// Same-file renewal, then fnOS's usual versioned-path renewal.
 	wildcard, wildSerial = issue("wildcard", "*.nas.example.com")
 	if err := n.Apply(routes, false, false); err != nil {

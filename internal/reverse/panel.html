@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Watchcow_R · 反向代理</title>
+<style>
+*{box-sizing:border-box}body{font:15px system-ui,sans-serif;margin:0;background:#f4f6fa;color:#1e293b}main{max-width:1200px;margin:32px auto;padding:0 24px}h1{margin-bottom:6px}h2{font-size:19px;margin:0}p{line-height:1.7}section,article{background:#fff;border:1px solid #dce3ed;border-radius:12px;padding:22px;margin:18px 0}input,select,button,textarea{font:inherit;border:1px solid #cbd5e1;border-radius:6px;padding:9px 12px}input,select{max-width:100%;background:#fff}button{background:#245fe5;color:#fff;cursor:pointer}button.secondary{background:#fff;color:#334155}label{display:flex;flex-direction:column;gap:6px;margin:14px 0}small,.muted{color:#64748b}a{color:#245fe5}code{overflow-wrap:anywhere}.error{color:#a62222}.heading,.actions,.tabs{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.heading img{width:44px;height:44px;object-fit:contain}.heading div{flex:1}.tabs{border-bottom:1px solid #e2e8f0;margin:20px 0;gap:4px}.tabs button{border:0;border-bottom:3px solid transparent;background:transparent;color:#64748b;border-radius:0;padding:12px}.tabs button[aria-selected=true]{color:#245fe5;border-color:#245fe5}.pane[hidden]{display:none}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:0 20px}textarea.code{font:13px/1.6 ui-monospace,SFMono-Regular,monospace;background:#101b2e;color:#e2e8f0;width:100%;min-height:200px;tab-size:4;resize:vertical;white-space:pre;overflow:auto}.location{border:1px solid #dce3ed;padding:16px;border-radius:8px;margin:12px 0}.location textarea{min-height:85px}.actions{margin-top:18px}.summary{overflow-wrap:anywhere}details summary{cursor:pointer}button:disabled{opacity:.6;cursor:wait}.pill{font-size:12px;color:#475569;background:#edf2fa;padding:4px 8px;border-radius:5px}
+</style></head><body><main>
+<a href="./">← 容器管理</a><h1>Watchcow_R</h1><p class="muted">反向代理 · 沿用飞牛现有端口、证书和桌面入口</p>
+{{if .Error}}<section class="error">应用配置失败：{{.Error}}</section>{{end}}
+{{if .DesktopCurrent}}<section>正在更新旧桌面入口：{{.DesktopCurrent}}</section>{{end}}
+{{if .DesktopError}}<section class="error">桌面迁移：{{.DesktopError}}</section>{{end}}
+<section><form method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><div class="actions"><label>基础域名<input name="domain" value="{{.Domain}}" required></label><button>保存基础域名</button></div></form><p>将 <code>*.{{.Domain}}</code> 解析到 NAS，并在飞牛中配置覆盖子域名的证书。</p><small>最近同步：{{.Applied}} · DNS 和 HTTPS 诊断在打开本页时更新</small></section>
+{{range .Rows}}<article>
+<div class="heading">{{if .Icon}}<img src="{{.Icon}}" alt="应用图标">{{end}}<div><h2>{{.Title}}{{if .Entry}} / {{.Entry}}{{end}}</h2><small>{{.AppName}}</small></div><span class="pill">{{.Message}}</span></div>
+{{if .Host}}<p class="summary"><a class="app-link" data-host="{{.Host}}" data-path="{{.Path}}" target="_blank" rel="noreferrer">{{.Host}}</a> → <code>{{.Upstream}}</code></p>{{end}}
+<details><summary>编辑代理 · Edit Proxy Host</summary>
+<form method="post" class="editor"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="key" value="{{.Key}}"><input type="hidden" name="editor" value="full">
+<div class="tabs" role="tablist" aria-label="代理设置"><button type="button" role="tab" data-tab="details" aria-selected="true">基本信息</button><button type="button" role="tab" data-tab="locations" aria-selected="false">自定义位置</button><button type="button" role="tab" data-tab="ssl" aria-selected="false">SSL</button><button type="button" role="tab" data-tab="nginx" aria-selected="false">自定义 Nginx 配置</button></div>
+<div class="pane" data-pane="details" role="tabpanel">
+<div class="grid"><label>反代模式<select name="enabled"><option value="auto"{{if eq .Mode "auto"}} selected{{end}}>自动检测</option><option value="true"{{if eq .Mode "true"}} selected{{end}}>启用</option><option value="false"{{if eq .Mode "false"}} selected{{end}}>关闭</option></select></label><label>自定义子域名<input name="subdomain" value="{{.Subdomain}}" placeholder="留空使用容器名" pattern="[a-z0-9-]+"></label></div>
+<label>后端地址覆盖<input name="upstream" value="{{.Override.Upstream}}" placeholder="{{.Upstream}}"><small>留空自动读取 Docker 绑定；可指定 HTTP/HTTPS IP 和端口。</small></label>
+<div class="grid"><label>自动读取时的后端协议<select name="protocol"><option value="">沿用容器配置</option><option value="http"{{if eq .Override.Protocol "http"}} selected{{end}}>HTTP</option><option value="https"{{if eq .Override.Protocol "https"}} selected{{end}}>HTTPS</option></select></label><label>自动读取时的后端端口<input name="port" inputmode="numeric" value="{{.Override.Port}}" placeholder="沿用容器配置"></label></div>
+<label>图标<select name="icon_mode"><option value="auto">未设置时自动获取网页图标</option><option value="keep"{{if eq .Override.IconMode "keep"}} selected{{end}}>保留现有图标</option></select></label><p>{{.IconMessage}}{{if .IconSource}}<br><small>来源：{{.IconSource}}</small>{{end}}</p><p><small>已设置的标签图标、本地图标或上传图标优先，自动获取不会覆盖它们。网页获取失败时保留现有图标。</small></p>
+</div>
+<div class="pane" data-pane="locations" role="tabpanel" hidden><p>为不同路径指定后端。添加 <code>/</code> 会替换自动生成的根位置。其余请求继续使用默认后端。</p><div class="locations">{{range .Override.CustomLocations}}<div class="location"><div class="grid"><label>路径<input name="location_path" value="{{.Path}}" placeholder="/api/"></label><label>后端 URL<input name="location_upstream" value="{{.Upstream}}" placeholder="http://192.0.2.10:8080/"></label></div><label>位置内 Nginx 指令<textarea class="code" name="location_nginx" spellcheck="false">{{.Nginx}}</textarea></label><button type="button" class="secondary remove-location">删除此位置</button></div>{{end}}</div><button type="button" class="secondary add-location">添加位置</button><p><small>后端 URL 的尾部斜杠遵循 Nginx 的路径替换规则。位置内可设置请求头、超时和重定向，无需再包 location 大括号。</small></p></div>
+<div class="pane" data-pane="ssl" role="tabpanel" hidden><h3>飞牛管理的 HTTPS</h3><p>DNS：{{.DNS}}<br>证书：{{.Certificate}}</p><p>主域名与泛域名可以使用两张独立证书。申请和自动续期在飞牛「系统设置 → 安全性 → 证书」中进行，Watchcow_R 自动匹配应用证书并跟随换证。</p><p><small>应用沿用当前浏览器的访问协议和端口；前端 HTTPS 与后端 HTTP/HTTPS 可分别配置。</small></p></div>
+<div class="pane" data-pane="nginx" role="tabpanel" hidden><p>填写本应用 <code>server</code> 内的指令，可直接粘贴 <code>location / { … }</code>、<code>error_page</code> 等配置。</p><textarea class="code" name="nginx" spellcheck="false" aria-label="自定义 Nginx 配置" placeholder="location / {
+    proxy_pass https://192.0.2.10:8089/;
+    proxy_set_header Host $host:$server_port;
+}
+error_page 497 https://$http_host$request_uri;">{{.Override.Nginx}}</textarea><p><small>不要再包 server/http 配置块；监听端口、域名和证书由系统管理。location / 只保留一份。保存时先执行 Nginx 校验，失败会恢复原设置和反代。</small></p></div>
+<p class="form-error error" role="alert" hidden></p><div class="actions"><button name="action" value="save">保存并应用</button><button class="secondary" name="action" value="refresh-icon" formnovalidate{{if .ConfiguredIcon}} disabled{{end}}>重新获取网页图标</button><small>只更新代理和桌面图标，业务容器继续运行。</small></div>
+</form></details></article>{{end}}
+</main><template id="location-template"><div class="location"><div class="grid"><label>路径<input name="location_path" placeholder="/api/"></label><label>后端 URL<input name="location_upstream" placeholder="http://192.0.2.10:8080/"></label></div><label>位置内 Nginx 指令<textarea class="code" name="location_nginx" spellcheck="false"></textarea></label><button type="button" class="secondary remove-location">删除此位置</button></div></template>
+<script>
+document.querySelectorAll('.app-link').forEach(a=>{const u=new URL(location.href);u.hostname=a.dataset.host;u.pathname=a.dataset.path;u.search='';u.hash='';a.href=u.href;});
+document.querySelectorAll('.editor').forEach(form=>{
+form.addEventListener('submit',async event=>{
+ event.preventDefault();const values=new URLSearchParams(new FormData(form));if(event.submitter)values.set('action',event.submitter.value);
+ const error=form.querySelector('.form-error');error.hidden=true;
+ const buttons=Array.from(form.querySelectorAll('button')).filter(b=>!b.disabled);buttons.forEach(b=>b.disabled=true);
+ try{const response=await fetch(form.action,{method:'POST',body:values,headers:{Accept:'application/json'}});if(!response.ok)throw new Error(await response.text());location.reload();}
+ catch(problem){error.textContent=problem.message;error.hidden=false;buttons.forEach(b=>b.disabled=false);}
+});
+
+form.querySelectorAll('[data-tab]').forEach(button=>button.addEventListener('click',()=>{form.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b===button)));form.querySelectorAll('[data-pane]').forEach(p=>p.hidden=p.dataset.pane!==button.dataset.tab);}));
+form.querySelector('.add-location').addEventListener('click',()=>form.querySelector('.locations').append(document.querySelector('#location-template').content.cloneNode(true)));
+form.addEventListener('click',event=>{if(event.target.classList.contains('remove-location'))event.target.closest('.location').remove();});
+form.querySelectorAll('textarea.code').forEach(area=>area.addEventListener('keydown',event=>{if(event.key==='Tab'){event.preventDefault();area.setRangeText('    ',area.selectionStart,area.selectionEnd,'end');}}));
+});
+</script></body></html>

@@ -223,6 +223,8 @@ func runServerMode(socketPath string, debug bool) {
 		defer close(desktopDone)
 		proxy.RunDesktopSync(proxyCtx)
 	}()
+	iconsDone := make(chan struct{})
+	go func() { defer close(iconsDone); proxy.RunIcons(proxyCtx) }()
 
 	slog.Info("Monitoring started (Press Ctrl+C to stop)")
 	slog.Info("")
@@ -241,6 +243,7 @@ func runServerMode(socketPath string, debug bool) {
 
 	// Stop server (which stops monitor too)
 	stopProxy()
+	<-iconsDone
 	<-desktopDone
 	<-proxyDone
 	if err := proxy.Disable(); err != nil {

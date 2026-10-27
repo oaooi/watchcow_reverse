@@ -22,10 +22,20 @@ const AppID = "watchcow-r"
 var dnsLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 type Override struct {
-	Enabled   *bool  `json:"enabled,omitempty"`
-	Subdomain string `json:"subdomain,omitempty"`
-	Protocol  string `json:"protocol,omitempty"`
-	Port      string `json:"port,omitempty"`
+	Enabled         *bool            `json:"enabled,omitempty"`
+	Subdomain       string           `json:"subdomain,omitempty"`
+	Protocol        string           `json:"protocol,omitempty"`
+	Port            string           `json:"port,omitempty"`
+	Upstream        string           `json:"upstream,omitempty"`
+	CustomLocations []CustomLocation `json:"custom_locations,omitempty"`
+	Nginx           string           `json:"nginx,omitempty"`
+	IconMode        string           `json:"icon_mode,omitempty"`
+}
+
+type CustomLocation struct {
+	Path     string `json:"path"`
+	Upstream string `json:"upstream"`
+	Nginx    string `json:"nginx,omitempty"`
 }
 
 type Settings struct {
@@ -64,6 +74,9 @@ func Load(dir string) (Settings, error) {
 		s.Domain, err = ValidateDomain(s.Domain)
 	}
 	for key, override := range s.Entries {
+		if e := validateOverride(override); e != nil {
+			return s, fmt.Errorf("入口 %s: %w", key, e)
+		}
 		if override.Protocol != "" && override.Protocol != "http" && override.Protocol != "https" {
 			return s, fmt.Errorf("入口 %s 的后端协议必须为 http 或 https", key)
 		}

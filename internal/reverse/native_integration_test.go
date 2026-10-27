@@ -194,6 +194,20 @@ func TestNativeNginxEndToEnd(t *testing.T) {
 		t.Fatal("duplex upgrade failed", err)
 	}
 	conn.Close()
+	// Parse the complete stock fnOS configuration and add an isolated vhost,
+	// rather than only testing insertion against a minimal fixture.
+	r.Nginx = "add_header X-Custom-Application enabled always;"
+	if err := n.Apply([]Route{r}, false, false); err != nil {
+		t.Fatal(err)
+	}
+	resp, err = request("https", "127.0.0.1:5667", "/headers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("X-Custom-Application") != "enabled" {
+		t.Fatal("custom host on full native layout failed", resp.StatusCode)
+	}
 	if err := n.Apply([]Route{r}, true, false); err != nil {
 		t.Fatal(err)
 	}

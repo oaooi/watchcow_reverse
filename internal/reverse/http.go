@@ -3,12 +3,22 @@ package reverse
 import (
 	"context"
 	"crypto/rand"
+	_ "embed"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
+
+	"watchcow/internal/fpkgen"
 )
 
 func token() (string, error) {
@@ -70,27 +80,39 @@ func (m *Manager) Launch(w http.ResponseWriter, r *http.Request) {
 	_ = launcher.Execute(w, route)
 }
 
+type panelRow struct {
+	Route
+	Override       Override
+	Title          string
+	Icon           template.URL
+	IconMessage    string
+	IconSource     string
+	ConfiguredIcon bool
+}
+
 type panelData struct {
 	Domain, CSRF, Error, Applied string
 	DesktopError, DesktopCurrent string
-	Rows                         []Route
+	Rows                         []panelRow
 }
 
-var panel = template.Must(template.New("panel").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Watchcow_R · 反向代理</title><style>
-body{font:15px system-ui,sans-serif;margin:0;background:#f5f7fb;color:#1e293b}main{max-width:1200px;margin:36px auto;padding:0 24px}h1{margin-bottom:8px}p{line-height:1.7}section,article{background:white;border:1px solid #dbe2ed;border-radius:12px;padding:22px;margin:18px 0}input,select,button{font:inherit;padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px}button{background:#245fe5;color:white;cursor:pointer}label{display:inline-block;margin:8px 18px 8px 0}.error{color:#a62222}code{overflow-wrap:anywhere}small{color:#64748b}a{color:#245fe5}.row{display:flex;flex-wrap:wrap;align-items:center;gap:12px}h2{font-size:18px}
-</style></head><body><main><a href="./">← 容器管理</a><h1>Watchcow_R</h1><p>通过飞牛现有端口访问容器应用。点击桌面图标时，自动沿用当前浏览器的 HTTP/HTTPS 和端口。</p>
-{{if .Error}}<section class="error">应用配置失败：{{.Error}}</section>{{end}}
-{{if .DesktopCurrent}}<section>正在更新旧桌面入口：{{.DesktopCurrent}}。业务容器继续运行。</section>{{end}}
-{{if .DesktopError}}<section class="error">部分桌面入口尚未完成迁移：{{.DesktopError}}。备份与恢复包已保留，稍后自动重试。</section>{{end}}
-<section><form method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>基础域名 <input name="domain" value="{{.Domain}}" required></label><button>保存并应用</button></form><p>请将 <code>*.{{.Domain}}</code> 解析到 NAS。HTTPS 证书请通过飞牛的证书管理配置，证书必须覆盖对应子域名。应用保留自己的登录认证。</p><small>最近同步：{{.Applied}} · 诊断结果在打开本页时更新</small></section>
-{{range .Rows}}<article><h2>{{.AppName}}{{if .Entry}} / {{.Entry}}{{end}}</h2><p>{{.Message}}</p>{{if .Host}}<p>访问地址：<a class="app-link" data-host="{{.Host}}" data-path="{{.Path}}" target="_blank" rel="noreferrer">{{.Host}}</a><br>后端：<code>{{.Upstream}}</code><br>DNS：{{.DNS}}<br>HTTPS：{{.Certificate}}</p>{{end}}<form method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="key" value="{{.Key}}"><label>反代 <select name="enabled"><option value="auto"{{if eq .Mode "auto"}} selected{{end}}>自动检测</option><option value="true"{{if eq .Mode "true"}} selected{{end}}>启用</option><option value="false"{{if eq .Mode "false"}} selected{{end}}>关闭</option></select></label><label>自定义子域名 <input name="subdomain" value="{{.Subdomain}}" placeholder="留空使用容器名" pattern="[a-z0-9-]+"></label><button>应用到入口</button></form></article>{{end}}
-<section><p>停止 Watchcow_R 后反代入口返回 503，业务容器保持原状态。卸载前会恢复备份的桌面入口和旧 WatchCow 的运行状态；发生外部修改时会保留文件并报告冲突。</p></section>
-</main><script>document.querySelectorAll('.app-link').forEach(a=>{const u=new URL(location.href);u.hostname=a.dataset.host;u.pathname=a.dataset.path;u.search='';u.hash='';a.href=u.href;});</script></body></html>`))
+//go:embed panel.html
+var panelHTML string
+var panel = template.Must(template.New("panel").Parse(panelHTML))
+
+func panelSaved(w http.ResponseWriter, r *http.Request) {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		return
+	}
+	http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
+}
 
 func (m *Manager) Panel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method == http.MethodPost {
-		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "无效表单", 400)
 			return
@@ -108,7 +130,21 @@ func (m *Manager) Panel(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		m.updateMu.Lock()
+		defer m.updateMu.Unlock()
 		m.mu.Lock()
+		previous, loadErr := Load(m.Dir)
+		if loadErr != nil {
+			m.mu.Unlock()
+			http.Error(w, loadErr.Error(), 500)
+			return
+		}
+		next, loadErr := Load(m.Dir)
+		if loadErr != nil {
+			m.mu.Unlock()
+			http.Error(w, loadErr.Error(), 500)
+			return
+		}
 		if k := r.Form.Get("key"); k != "" {
 			found := false
 			for _, row := range m.rows {
@@ -121,7 +157,21 @@ func (m *Manager) Panel(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "入口不存在", 404)
 				return
 			}
-			o := m.settings.Entries[k]
+			if r.Form.Get("action") == "refresh-icon" {
+				m.loadIcons()
+				state := m.icons[k]
+				state.Checked = time.Time{}
+				m.icons[k] = state
+				err := m.saveIcons()
+				m.mu.Unlock()
+				if err != nil {
+					http.Error(w, err.Error(), 500)
+					return
+				}
+				panelSaved(w, r)
+				return
+			}
+			o := next.Entries[k]
 			o.Subdomain = strings.ToLower(strings.TrimSpace(r.Form.Get("subdomain")))
 			if o.Subdomain != "" && !dnsLabel.MatchString(o.Subdomain) {
 				m.mu.Unlock()
@@ -130,6 +180,7 @@ func (m *Manager) Panel(w http.ResponseWriter, r *http.Request) {
 			}
 			switch r.Form.Get("enabled") {
 			case "auto":
+				o.Enabled = nil
 			case "true":
 				v := true
 				o.Enabled = &v
@@ -141,7 +192,54 @@ func (m *Manager) Panel(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "无效开关", 400)
 				return
 			}
-			m.settings.Entries[k] = o
+			if r.Form.Get("editor") == "full" {
+				o.Upstream = strings.TrimSuffix(strings.TrimSpace(r.Form.Get("upstream")), "/")
+				o.Protocol = r.Form.Get("protocol")
+				o.Port = strings.TrimSpace(r.Form.Get("port"))
+				if o.Protocol != "" && o.Protocol != "http" && o.Protocol != "https" {
+					m.mu.Unlock()
+					http.Error(w, "无效后端协议", 400)
+					return
+				}
+				if o.Port != "" {
+					v, e := strconv.Atoi(o.Port)
+					if e != nil || v < 1 || v > 65535 {
+						m.mu.Unlock()
+						http.Error(w, "无效后端端口", 400)
+						return
+					}
+				}
+				o.Nginx = r.Form.Get("nginx")
+				o.IconMode = r.Form.Get("icon_mode")
+				if o.IconMode == "auto" {
+					o.IconMode = ""
+				}
+				o.CustomLocations = nil
+				paths, upstreams, configs := r.Form["location_path"], r.Form["location_upstream"], r.Form["location_nginx"]
+				if len(paths) != len(upstreams) || len(paths) != len(configs) {
+					m.mu.Unlock()
+					http.Error(w, "无效位置表单", 400)
+					return
+				}
+				for i, path := range paths {
+					path = strings.TrimSpace(path)
+					u := strings.TrimSpace(upstreams[i])
+					if path == "" && u == "" && strings.TrimSpace(configs[i]) == "" {
+						continue
+					}
+					o.CustomLocations = append(o.CustomLocations, CustomLocation{Path: path, Upstream: u, Nginx: configs[i]})
+				}
+			}
+			if err := validateOverride(o); err != nil {
+				m.mu.Unlock()
+				http.Error(w, err.Error(), 400)
+				return
+			}
+			if reflect.DeepEqual(o, Override{}) {
+				delete(next.Entries, k)
+			} else {
+				next.Entries[k] = o
+			}
 		} else {
 			domain, err := ValidateDomain(r.Form.Get("domain"))
 			if err != nil {
@@ -149,18 +247,36 @@ func (m *Manager) Panel(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), 400)
 				return
 			}
-			m.settings.Domain = domain
+			next.Domain = domain
 		}
-		err := m.settings.Save(m.Dir)
+		err := next.Save(m.Dir)
 		m.mu.Unlock()
 		if err == nil {
 			err = m.Reconcile(r.Context())
 		}
 		if err != nil {
-			http.Error(w, err.Error(), 500)
+			// A failed Nginx test must not leave an invalid desired config
+			// retrying forever. Keep serving the previous, working routes.
+			m.mu.Lock()
+			current, e := Load(m.Dir)
+			if e == nil && current.Domain == next.Domain && reflect.DeepEqual(current.Entries, next.Entries) {
+				e = previous.Save(m.Dir)
+			} else if e == nil {
+				e = fmt.Errorf("设置发生外部修改，保留现状")
+			}
+			m.mu.Unlock()
+			if e == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				e = m.Reconcile(ctx)
+				cancel()
+			}
+			if e != nil {
+				err = fmt.Errorf("%w；恢复设置: %v", err, e)
+			}
+			http.Error(w, "保存未生效，原反代配置已保留："+err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
-		http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
+		panelSaved(w, r)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -168,19 +284,53 @@ func (m *Manager) Panel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.mu.Lock()
-	data := panelData{Domain: m.settings.Domain, CSRF: m.csrf, Error: m.lastError, Applied: m.lastApply.Format("2006-01-02 15:04:05"), Rows: append([]Route(nil), m.rows...)}
+	data := panelData{Domain: m.settings.Domain, CSRF: m.csrf, Error: m.lastError, Applied: m.lastApply.Format("2006-01-02 15:04:05")}
 	data.DesktopError, data.DesktopCurrent = m.desktopError, m.desktopCurrent
-	for i := range data.Rows {
-		override := m.settings.Entries[data.Rows[i].Key]
-		data.Rows[i].Subdomain = override.Subdomain
-		data.Rows[i].Mode = "auto"
+	m.loadIcons()
+	for _, route := range m.rows {
+		override := m.settings.Entries[route.Key]
+		row := panelRow{Route: route, Override: override, Title: route.AppName, IconMessage: "等待获取网页图标"}
+		row.Subdomain = override.Subdomain
+		row.Mode = "auto"
 		if override.Enabled != nil {
+			row.Mode = "false"
 			if *override.Enabled {
-				data.Rows[i].Mode = "true"
-			} else {
-				data.Rows[i].Mode = "false"
+				row.Mode = "true"
 			}
 		}
+		a := m.Registry.Get(route.AppName)
+		if a != nil {
+			row.Title = a.DisplayName
+			if e := a.GetEntry(route.Entry); e != nil && !fpkgen.AutomaticIcon(a, *e) {
+				row.IconMessage = "使用已设置图标"
+				row.ConfiguredIcon = true
+			}
+		}
+		if override.IconMode == "keep" {
+			row.IconMessage = "保留现有图标"
+		}
+		state := m.icons[route.Key]
+		if state.Message != "" && row.IconMessage == "等待获取网页图标" {
+			row.IconMessage = state.Message
+			row.IconSource = state.Source
+		}
+		preview := state.Preview
+		if row.ConfiguredIcon || override.IconMode == "keep" {
+			preview = nil
+		}
+		if len(preview) == 0 && desktopID.MatchString(route.AppName) && iconEntryID.MatchString(route.Entry) {
+			stem := "icon"
+			if route.Entry != "" {
+				stem += "_" + route.Entry
+			}
+			if b, e := os.ReadFile(filepath.Join(m.AppsDir, route.AppName, "target", "ui", "images", stem+"_64.png")); e == nil && len(b) < 256<<10 {
+				preview = b
+			}
+		}
+		if len(preview) > 0 {
+			row.Icon = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(preview))
+		}
+		data.Rows = append(data.Rows, row)
 	}
 	m.mu.Unlock()
 	layout, _ := m.Native.Layout()

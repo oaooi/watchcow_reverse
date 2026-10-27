@@ -234,6 +234,13 @@ func decodeImageData(data []byte) (image.Image, error) {
 
 	// Use standard image.Decode for PNG, JPEG, WebP, BMP
 	// (decoders registered via imports in icons.go)
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if config.Width < 1 || config.Height < 1 || config.Width > 4096 || config.Height > 4096 {
+		return nil, fmt.Errorf("icon dimensions exceed 4096 pixels")
+	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode %s: %w", format, err)

@@ -48,7 +48,6 @@ func (e *icoEntry) resolution() int {
 	return e.getActualWidth() * e.getActualHeight()
 }
 
-
 // decodeICO decodes an ICO file and returns the highest resolution image.
 // It supports both PNG and BMP encoded images within the ICO container.
 func decodeICO(data []byte) (image.Image, error) {
@@ -126,7 +125,6 @@ func parseICOEntry(data []byte) *icoEntry {
 	}
 }
 
-
 // decodeICOImage decodes a single image from ICO data.
 // The image can be either PNG or BMP format.
 func decodeICOImage(data []byte, entry *icoEntry) (image.Image, error) {
@@ -136,7 +134,7 @@ func decodeICOImage(data []byte, entry *icoEntry) (image.Image, error) {
 
 	// Check if it's a PNG (starts with PNG signature)
 	if bytes.HasPrefix(data, magicPNG) {
-		img, _, err := image.Decode(bytes.NewReader(data))
+		img, err := decodeImageData(data)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode PNG in ICO: %w", err)
 		}
@@ -176,6 +174,9 @@ func decodeICOBMP(data []byte, entry *icoEntry) (image.Image, error) {
 	}
 	if height == 0 {
 		height = entry.getActualHeight()
+	}
+	if width < 1 || height < 1 || width > 4096 || height > 4096 {
+		return nil, fmt.Errorf("invalid ICO dimensions")
 	}
 
 	// Only support uncompressed BMPs
@@ -227,7 +228,6 @@ func decodeICOBMP(data []byte, entry *icoEntry) (image.Image, error) {
 
 	return img, nil
 }
-
 
 // decodeICOBMP1 decodes 1-bit (monochrome) BMP data
 func decodeICOBMP1(img *image.RGBA, data []byte, width, height int, palette []uint8) error {

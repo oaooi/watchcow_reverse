@@ -27,6 +27,7 @@ type probeResult struct {
 type Manager struct {
 	Mode           *ModeControl
 	mu             sync.Mutex
+	updateMu       sync.Mutex
 	Dir            string
 	AppsDir        string
 	Native         *Native
@@ -48,6 +49,7 @@ type Manager struct {
 	desktopError   string
 	desktopCurrent string
 	SyncDesktop    func(context.Context, string) error
+	icons          map[string]iconState
 }
 
 func New(dir string, registry *app.Registry) (*Manager, error) {
@@ -229,7 +231,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			if override.Port != "" {
 				e.Port = override.Port
 			}
-			r := Route{Key: key(a, e), AppName: a.AppName, Entry: e.Name, Message: "待检测"}
+			r := Route{Key: key(a, e), AppName: a.AppName, Entry: e.Name, Message: "待检测", Nginx: override.Nginx, CustomLocations: override.CustomLocations}
 			ok, reason := eligible(m.settings, a, e)
 			if !ok {
 				r.Message = reason
@@ -248,7 +250,10 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 				protocol = "http"
 			}
 			r.Upstream = protocol + "://127.0.0.1:" + e.Port
-			if m.Resolve != nil {
+			if override.Upstream != "" {
+				r.Upstream = override.Upstream
+			}
+			if m.Resolve != nil && override.Upstream == "" {
 				resolved, resolveErr := m.Resolve(ctx, a, e)
 				err = resolveErr
 				if err != nil {
@@ -270,7 +275,12 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 				continue
 			}
 			if a.Status == app.StatusRunning {
-				if err := m.probe(ctx, r.Upstream); err != nil {
+				probeTarget, _ := rootProxyOrigin(r)
+				var probeErr error
+				if probeTarget != "" {
+					probeErr = m.probe(ctx, probeTarget)
+				}
+				if err := probeErr; err != nil {
 					r.Message = "未检测到 HTTP 响应，暂不接管: " + err.Error()
 					// Existing launchers keep a 503 vhost while the backend is down.
 					if _, owned := m.routes[host]; !owned {

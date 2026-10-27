@@ -30,7 +30,11 @@ func (g *Generator) handleIcons(appDir string, config *AppConfig) error {
 
 	// Process each entry's icon
 	for _, entry := range config.Entries {
-		entryIcon, err := loadIcon(entry.Icon, basePath)
+		entryIcon := automaticEntryIcon(config, entry)
+		var err error
+		if entryIcon == nil {
+			entryIcon, err = loadIcon(entry.Icon, basePath)
+		}
 		if err != nil && entry.Icon != "" {
 			fmt.Printf("Warning: Failed to load icon for entry '%s': %v\n", entry.Name, err)
 		}
@@ -94,7 +98,10 @@ func (g *Generator) handleIcons(appDir string, config *AppConfig) error {
 		if !hasDefaultEntry {
 			// Use first entry's icon for root icons
 			firstEntry := config.Entries[0]
-			entryIcon, _ := loadIcon(firstEntry.Icon, basePath)
+			entryIcon := automaticEntryIcon(config, firstEntry)
+			if entryIcon == nil {
+				entryIcon, _ = loadIcon(firstEntry.Icon, basePath)
+			}
 			if entryIcon == nil {
 				if defaultIcon == nil {
 					defaultIcon, _ = loadDefaultIcon()
