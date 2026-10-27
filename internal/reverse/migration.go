@@ -279,6 +279,9 @@ func (m *Manager) archiveApp(id string) error {
 func (m *Manager) Rollback() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.RecoverDesktopPending(context.Background()); err != nil {
+		return err
+	}
 	if err := m.Native.Apply(nil, true, true); err != nil {
 		return err
 	}
@@ -326,6 +329,23 @@ func (m *Manager) Rollback() error {
 	}
 	if len(problems) > 0 {
 		return errors.Join(problems...)
+	}
+	// Restoring the files does not restore fnOS's persisted desktop registry.
+	// Re-register the restored launchers before removing the CGI provider.
+	ids := map[string]bool{}
+	for _, path := range paths {
+		rel, err := filepath.Rel(m.AppsDir, path)
+		parts := strings.Split(rel, string(filepath.Separator))
+		if err == nil && len(parts) > 1 && desktopID.MatchString(parts[0]) && parts[0] != AppID && parts[0] != "watchcow" {
+			if _, err := os.Stat(filepath.Join(m.AppsDir, parts[0])); err == nil {
+				ids[parts[0]] = true
+			}
+		}
+	}
+	for id := range ids {
+		if err := m.SyncDesktop(context.Background(), id); err != nil {
+			return err
+		}
 	}
 	if err := m.restoreMode(true); err != nil {
 		return err

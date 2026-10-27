@@ -17,7 +17,7 @@ start)
     "$CMD" >> "$LOG_FILE" 2>&1 &
     echo "$!" > "$PID_FILE"
     # Migration may wait for the old watcher and restart the native Web service.
-    for ((count=0; count<120; count++)); do
+    for ((count=0; count<240; count++)); do
         status || { tail -n 12 "$LOG_FILE" >&2; exit 1; }
         [ -S "${TRIM_PKGVAR}/watchcow.sock" ] && exit 0
         sleep 1
@@ -28,7 +28,7 @@ start)
 stop)
     if status; then
         kill -TERM "$pid"
-        for ((count=0; count<60; count++)); do
+        for ((count=0; count<180; count++)); do
             status || break
             sleep 1
         done

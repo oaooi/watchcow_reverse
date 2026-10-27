@@ -225,6 +225,7 @@ func manager(t *testing.T) (*Manager, *app.App, string) {
 	m.Native = n
 	m.AppsDir = filepath.Join(t.TempDir(), "apps")
 	m.oldRunning = func() bool { return false }
+	m.SyncDesktop = func(context.Context, string) error { return nil }
 	m.Probe = func(context.Context, string) error { return nil }
 	a := &app.App{AppName: "watchcow.embyserver", ContainerName: "EmbyServer", ContainerID: "old", Status: app.StatusRunning, Entries: []app.Entry{{Protocol: "http", Port: "8096", Path: "/web/index.html?x=1", AllUsers: true}}}
 	m.Registry.Register(a)
@@ -407,5 +408,66 @@ func TestRollbackDoesNotRecreateUninstalledChild(t *testing.T) {
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatal("uninstalled child recreated", err)
+	}
+}
+
+func TestBackendOverrideUsesDockerResolverAndPreservesLabels(t *testing.T) {
+	m, a, _ := manager(t)
+	settings, err := Load(m.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Entries[key(a, a.Entries[0])] = Override{Protocol: "https", Port: "9443"}
+	if err := settings.Save(m.Dir); err != nil {
+		t.Fatal(err)
+	}
+	m.Resolve = func(_ context.Context, got *app.App, entry app.Entry) (string, error) {
+		if got.ContainerID != a.ContainerID || entry.Protocol != "https" || entry.Port != "9443" {
+			t.Fatalf("incorrect resolver input: %+v", entry)
+		}
+		return "https://127.0.0.1:9443", nil
+	}
+	if err := m.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if m.routes["embyserver.nas.example.com"].Upstream != "https://127.0.0.1:9443" {
+		t.Fatal(m.routes)
+	}
+	if a.Entries[0].Port != "8096" || a.Entries[0].Protocol != "http" {
+		t.Fatal("override changed original labels")
+	}
+	for _, invalid := range []Override{{Protocol: "ftp"}, {Port: "0"}, {Port: "65536"}, {Port: "9443/path"}} {
+		settings.Entries[key(a, a.Entries[0])] = invalid
+		if err := settings.Save(m.Dir); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(m.Dir); err == nil {
+			t.Fatalf("accepted invalid backend override: %+v", invalid)
+		}
+	}
+}
+
+func TestRollbackRefreshesRestoredDesktopRegistry(t *testing.T) {
+	m, _, path := manager(t)
+	original := read(t, path)
+	if err := m.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	m.SyncDesktop = func(_ context.Context, id string) error {
+		calls++
+		if id != "watchcow.embyserver" {
+			t.Fatal(id)
+		}
+		if !bytes.Equal(read(t, path), original) {
+			t.Fatal("registration ran before restoring original launcher")
+		}
+		return nil
+	}
+	if err := m.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatal("restored files without refreshing desktop registry", calls)
 	}
 }

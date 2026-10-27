@@ -24,6 +24,8 @@ var dnsLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 type Override struct {
 	Enabled   *bool  `json:"enabled,omitempty"`
 	Subdomain string `json:"subdomain,omitempty"`
+	Protocol  string `json:"protocol,omitempty"`
+	Port      string `json:"port,omitempty"`
 }
 
 type Settings struct {
@@ -60,6 +62,17 @@ func Load(dir string) (Settings, error) {
 	}
 	if s.Domain != "" {
 		s.Domain, err = ValidateDomain(s.Domain)
+	}
+	for key, override := range s.Entries {
+		if override.Protocol != "" && override.Protocol != "http" && override.Protocol != "https" {
+			return s, fmt.Errorf("入口 %s 的后端协议必须为 http 或 https", key)
+		}
+		if override.Port != "" {
+			port, e := strconv.Atoi(override.Port)
+			if e != nil || port < 1 || port > 65535 {
+				return s, fmt.Errorf("入口 %s 的后端端口无效", key)
+			}
+		}
 	}
 	return s, err
 }

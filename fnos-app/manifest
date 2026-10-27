@@ -1,5 +1,5 @@
 appname         = watchcow-r
-version         = 0.1.0
+version         = 0.1.1
 display_name    = Watchcow_R
 desc            = Watchcow_R：自动将 Docker Web 应用添加到飞牛桌面，通过容器名子域名复用飞牛现有 HTTP/HTTPS 端口。兼容 watchcow 标签，支持迁移备份与回退。
 arch            = x86_64

@@ -25,25 +25,29 @@ type probeResult struct {
 }
 
 type Manager struct {
-	Mode       *ModeControl
-	mu         sync.Mutex
-	Dir        string
-	AppsDir    string
-	Native     *Native
-	Registry   *app.Registry
-	settings   Settings
-	journal    journal
-	routes     map[string]Route // hostname -> route, including disabled tombstones
-	rows       []Route
-	lastError  string
-	lastApply  time.Time
-	probes     map[string]probeResult
-	Probe      func(context.Context, string) error
-	Resolve    func(context.Context, *app.App, app.Entry) (string, error)
-	LiveState  func(context.Context) (map[string]bool, error)
-	csrf       string
-	oldRunning func() bool
-	controlOld func(string) error
+	Mode           *ModeControl
+	mu             sync.Mutex
+	Dir            string
+	AppsDir        string
+	Native         *Native
+	Registry       *app.Registry
+	settings       Settings
+	journal        journal
+	routes         map[string]Route // hostname -> route, including disabled tombstones
+	rows           []Route
+	lastError      string
+	lastApply      time.Time
+	probes         map[string]probeResult
+	Probe          func(context.Context, string) error
+	Resolve        func(context.Context, *app.App, app.Entry) (string, error)
+	LiveState      func(context.Context) (map[string]bool, error)
+	csrf           string
+	oldRunning     func() bool
+	controlOld     func(string) error
+	desktopBusy    map[string]bool
+	desktopError   string
+	desktopCurrent string
+	SyncDesktop    func(context.Context, string) error
 }
 
 func New(dir string, registry *app.Registry) (*Manager, error) {
@@ -54,6 +58,9 @@ func New(dir string, registry *app.Registry) (*Manager, error) {
 	m := &Manager{Dir: dir, AppsDir: "/var/apps", Native: NewNative(dir), Registry: registry, settings: s, journal: journal{Files: map[string]fileBackup{}}, routes: map[string]Route{}, probes: map[string]probeResult{}}
 	m.oldRunning = oldWatchcowRunning
 	m.controlOld = controlOld
+	m.SyncDesktop = func(ctx context.Context, id string) error {
+		return (&DesktopMigrator{Dir: m.Dir, AppsDir: m.AppsDir}).Sync(ctx, id)
+	}
 	if data, err := os.ReadFile(filepath.Join(dir, "backup", "migration.json")); err == nil {
 		if err := json.Unmarshal(data, &m.journal); err != nil {
 			return nil, err
@@ -164,6 +171,9 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		}
 	}()
 	for host, r := range m.routes {
+		if m.desktopBusy[r.AppName] {
+			continue
+		}
 		r.Active = false
 		r.Message = "容器未运行或入口已移除"
 		m.routes[host] = r
@@ -179,12 +189,20 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		}
 	}
 	rows := []Route{}
+	for _, row := range m.rows {
+		if m.desktopBusy[row.AppName] {
+			rows = append(rows, row)
+		}
+	}
 	type action struct {
 		app    *app.App
 		routes []Route
 	}
 	var actions []action
 	for _, a := range apps {
+		if m.desktopBusy[a.AppName] {
+			continue
+		}
 		if live != nil {
 			running, exists := live[a.ContainerName]
 			if !exists {
@@ -202,6 +220,15 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		}
 		var appRoutes []Route
 		for _, e := range a.Entries {
+			// Correct legacy desktop labels without recreating a business
+			// container. Resolution still requires an actual Docker binding.
+			override := m.settings.Entries[key(a, e)]
+			if override.Protocol != "" {
+				e.Protocol = override.Protocol
+			}
+			if override.Port != "" {
+				e.Port = override.Port
+			}
 			r := Route{Key: key(a, e), AppName: a.AppName, Entry: e.Name, Message: "待检测"}
 			ok, reason := eligible(m.settings, a, e)
 			if !ok {

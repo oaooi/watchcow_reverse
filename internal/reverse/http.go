@@ -25,7 +25,7 @@ func (m *Manager) SetupPage(w http.ResponseWriter, r *http.Request) {
 	_ = setup.Execute(w, nil)
 }
 
-var launcher = template.Must(template.New("launcher").Parse(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Watchcow_R</title><p>正在打开应用…</p><script>
+var launcher = template.Must(template.New("launcher").Parse(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Watchcow_R</title><script>
 const target = new URL(window.location.href);
 target.hostname = {{.Host}};
 const appPath = new URL({{.Path}}, window.location.origin);
@@ -72,6 +72,7 @@ func (m *Manager) Launch(w http.ResponseWriter, r *http.Request) {
 
 type panelData struct {
 	Domain, CSRF, Error, Applied string
+	DesktopError, DesktopCurrent string
 	Rows                         []Route
 }
 
@@ -79,6 +80,8 @@ var panel = template.Must(template.New("panel").Parse(`<!doctype html><html lang
 body{font:15px system-ui,sans-serif;margin:0;background:#f5f7fb;color:#1e293b}main{max-width:1200px;margin:36px auto;padding:0 24px}h1{margin-bottom:8px}p{line-height:1.7}section,article{background:white;border:1px solid #dbe2ed;border-radius:12px;padding:22px;margin:18px 0}input,select,button{font:inherit;padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px}button{background:#245fe5;color:white;cursor:pointer}label{display:inline-block;margin:8px 18px 8px 0}.error{color:#a62222}code{overflow-wrap:anywhere}small{color:#64748b}a{color:#245fe5}.row{display:flex;flex-wrap:wrap;align-items:center;gap:12px}h2{font-size:18px}
 </style></head><body><main><a href="./">← 容器管理</a><h1>Watchcow_R</h1><p>通过飞牛现有端口访问容器应用。点击桌面图标时，自动沿用当前浏览器的 HTTP/HTTPS 和端口。</p>
 {{if .Error}}<section class="error">应用配置失败：{{.Error}}</section>{{end}}
+{{if .DesktopCurrent}}<section>正在更新旧桌面入口：{{.DesktopCurrent}}。业务容器继续运行。</section>{{end}}
+{{if .DesktopError}}<section class="error">部分桌面入口尚未完成迁移：{{.DesktopError}}。备份与恢复包已保留，稍后自动重试。</section>{{end}}
 <section><form method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>基础域名 <input name="domain" value="{{.Domain}}" required></label><button>保存并应用</button></form><p>请将 <code>*.{{.Domain}}</code> 解析到 NAS。HTTPS 证书请通过飞牛的证书管理配置，证书必须覆盖对应子域名。应用保留自己的登录认证。</p><small>最近同步：{{.Applied}} · 诊断结果在打开本页时更新</small></section>
 {{range .Rows}}<article><h2>{{.AppName}}{{if .Entry}} / {{.Entry}}{{end}}</h2><p>{{.Message}}</p>{{if .Host}}<p>访问地址：<a class="app-link" data-host="{{.Host}}" data-path="{{.Path}}" target="_blank" rel="noreferrer">{{.Host}}</a><br>后端：<code>{{.Upstream}}</code><br>DNS：{{.DNS}}<br>HTTPS：{{.Certificate}}</p>{{end}}<form method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="key" value="{{.Key}}"><label>反代 <select name="enabled"><option value="auto"{{if eq .Mode "auto"}} selected{{end}}>自动检测</option><option value="true"{{if eq .Mode "true"}} selected{{end}}>启用</option><option value="false"{{if eq .Mode "false"}} selected{{end}}>关闭</option></select></label><label>自定义子域名 <input name="subdomain" value="{{.Subdomain}}" placeholder="留空使用容器名" pattern="[a-z0-9-]+"></label><button>应用到入口</button></form></article>{{end}}
 <section><p>停止 Watchcow_R 后反代入口返回 503，业务容器保持原状态。卸载前会恢复备份的桌面入口和旧 WatchCow 的运行状态；发生外部修改时会保留文件并报告冲突。</p></section>
@@ -118,7 +121,8 @@ func (m *Manager) Panel(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "入口不存在", 404)
 				return
 			}
-			o := Override{Subdomain: strings.ToLower(strings.TrimSpace(r.Form.Get("subdomain")))}
+			o := m.settings.Entries[k]
+			o.Subdomain = strings.ToLower(strings.TrimSpace(r.Form.Get("subdomain")))
 			if o.Subdomain != "" && !dnsLabel.MatchString(o.Subdomain) {
 				m.mu.Unlock()
 				http.Error(w, "无效子域名", 400)
@@ -165,6 +169,7 @@ func (m *Manager) Panel(w http.ResponseWriter, r *http.Request) {
 	}
 	m.mu.Lock()
 	data := panelData{Domain: m.settings.Domain, CSRF: m.csrf, Error: m.lastError, Applied: m.lastApply.Format("2006-01-02 15:04:05"), Rows: append([]Route(nil), m.rows...)}
+	data.DesktopError, data.DesktopCurrent = m.desktopError, m.desktopCurrent
 	for i := range data.Rows {
 		override := m.settings.Entries[data.Rows[i].Key]
 		data.Rows[i].Subdomain = override.Subdomain

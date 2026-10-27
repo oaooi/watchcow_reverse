@@ -144,6 +144,13 @@ func runServerMode(socketPath string, debug bool) {
 		abort("Migration preparation", err)
 	}
 	_ = os.Setenv("WATCHCOW_R_ACTIVE", "1")
+	// Complete a previously interrupted desktop reinstall before the Docker
+	// monitor can mistake its temporarily missing package for a fresh install.
+	if err := proxy.RecoverDesktopPending(ctx); err != nil {
+		slog.Error("Recover interrupted desktop registration; backups retained", "error", err)
+		monitor.Stop()
+		return
+	}
 
 	// Step 2: Create dashboard storage and connect to monitor
 	dashboardStorage, err := server.NewDashboardStorage()
@@ -211,6 +218,11 @@ func runServerMode(socketPath string, debug bool) {
 		}
 		proxy.Run(proxyCtx)
 	}()
+	desktopDone := make(chan struct{})
+	go func() {
+		defer close(desktopDone)
+		proxy.RunDesktopSync(proxyCtx)
+	}()
 
 	slog.Info("Monitoring started (Press Ctrl+C to stop)")
 	slog.Info("")
@@ -229,6 +241,7 @@ func runServerMode(socketPath string, debug bool) {
 
 	// Stop server (which stops monitor too)
 	stopProxy()
+	<-desktopDone
 	<-proxyDone
 	if err := proxy.Disable(); err != nil {
 		slog.Error("Disable proxy", "error", err)
