@@ -1,0 +1,71 @@
+:root {
+    --wc-bg: #f4f6f4;
+    --wc-surface: #ffffff;
+    --wc-surface-muted: #f8faf8;
+    --wc-border: #dce3de;
+    --wc-border-strong: #c8d3cc;
+    --wc-text: #18231d;
+    --wc-text-muted: #66736b;
+    --wc-accent: #167555;
+    --wc-accent-strong: #0e5f43;
+    --wc-accent-soft: #e6f4ed;
+    --wc-info: #246b84;
+    --wc-info-soft: #e7f3f7;
+    --wc-warning: #8a5a0a;
+    --wc-warning-soft: #fff4dc;
+    --wc-danger: #b43d45;
+    --wc-danger-soft: #fcebed;
+    --wc-topbar: rgba(255, 255, 255, 0.96);
+    --wc-surface-hover: #f0f5f2;
+    --wc-link: #245fe5;
+    --wc-link-soft: #edf2ff;
+    --wc-on-accent: #ffffff;
+    --wc-shadow: 0 1px 2px rgba(21, 38, 28, 0.04), 0 10px 28px rgba(21, 38, 28, 0.06);
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --wc-bg: #16191e;
+    --wc-surface: #20252c;
+    --wc-surface-muted: #262c34;
+    --wc-surface-hover: #2c343c;
+    --wc-topbar: #20252c;
+    --wc-border: #37414b;
+    --wc-border-strong: #505e69;
+    --wc-text: #e8eef2;
+    --wc-text-muted: #a8b5c0;
+    --wc-accent: #73d8af;
+    --wc-accent-strong: #a1eaca;
+    --wc-accent-soft: #203e34;
+    --wc-on-accent: #102a20;
+    --wc-info: #8bd3ed;
+    --wc-info-soft: #203844;
+    --wc-warning: #efc678;
+    --wc-warning-soft: #423620;
+    --wc-danger: #ffadb4;
+    --wc-danger-soft: #492b32;
+    --wc-link: #93b5ff;
+    --wc-link-soft: #263957;
+    --wc-shadow: 0 1px 2px #0003, 0 10px 28px #0002;
+}
+:root { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+.wc-nav-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 40px;
+    padding: 9px 14px;
+    border: 1px solid var(--wc-border);
+    border-radius: 9px;
+    background: var(--wc-link-soft);
+    color: var(--wc-link);
+    font: 600 14px/1.4 system-ui, sans-serif;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background 150ms, border-color 150ms;
+}
+.wc-nav-link:hover { background: var(--wc-surface-hover); color: var(--wc-link); border-color: var(--wc-link); }
+.wc-nav-link:focus-visible { outline: 2px solid var(--wc-link); outline-offset: 3px; }
+.wc-nav-link svg { width: 19px; height: 19px; flex: 0 0 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

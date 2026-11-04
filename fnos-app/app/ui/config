@@ -1,7 +1,7 @@
 {
     ".url": {
         "watchcow-r.dashboard": {
-            "title": "Watchcow_R",
+            "title": "WatchCow_R",
             "icon": "images/icon-{0}.png",
             "type": "iframe",
             "protocol": "",

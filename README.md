@@ -1,4 +1,4 @@
-# Watchcow_R
+# WatchCow_R
 
 将 Docker Web 应用添加到飞牛 fnOS 桌面，通过容器名子域名复用飞牛现有 HTTP/HTTPS 端口。
 
@@ -10,7 +10,7 @@ http://embyserver.nas.example.com:5666/
 
 从 `https://nas.example.com:5667` 进入，则使用 `https://embyserver.nas.example.com:5667`。后端仍可运行 HTTP 8096。无需为每个应用额外放行公网端口。
 
-基于 [tf4fun/watchcow](https://github.com/tf4fun/watchcow)，保留上游 MIT 许可证；上游说明见 [README.upstream.md](README.upstream.md)。这是独立应用，显示名 **Watchcow_R**，包名 **watchcow-r**。生成的子应用沿用 `watchcow.*` 或原有自定义标识。
+基于 [tf4fun/watchcow](https://github.com/tf4fun/watchcow)，保留上游 MIT 许可证；上游说明见 [README.upstream.md](README.upstream.md)。这是独立应用，显示名 **WatchCow_R**，包名 **watchcow-r**。生成的子应用沿用 `watchcow.*` 或原有自定义标识。
 
 ## 安装
 
@@ -18,20 +18,26 @@ http://embyserver.nas.example.com:5666/
 2. 从 Releases 下载 `Watchcow_R-x86.fpk` 或 `Watchcow_R-arm.fpk`，在飞牛应用中心手动安装。
 3. 安装向导填入基础域名，例如 `nas.example.com`，不含协议、端口和 `*`。默认扩展授权为 `false`，安装后先显示说明页，不接管旧 WatchCow、不修改 Nginx。
 4. 阅读扩展模式说明后，在应用配置中将 `WATCHCOW_R_NATIVE_EXTENSIONS` 设置为 `true`，才开始迁移。飞牛 Web 服务将重启一次，已有网页/WebSocket 连接可能中断；Docker 业务容器不重启。扩展期间暂停飞牛 Nginx 的配置自恢复。
-5. 启动 Watchcow_R，打开桌面上的管理员控制面板，进入「反向代理设置」查看入口、后端、DNS、证书及应用错误。
+5. 启动 WatchCow_R，打开桌面上的管理员控制面板，进入「反向代理设置」查看入口、后端、DNS、证书及应用错误。
 6. 等待首次同步完成后刷新飞牛桌面。新建或修改应用后，反代配置通常在下一次 5 秒同步时更新，桌面登记随后自动完成；批量迁移可能需要数分钟。
 
 HTTPS 证书必须覆盖实际子域名，例如 `*.nas.example.com`。请通过飞牛原有证书管理申请和续期；只覆盖 `nas.example.com` 的证书不能用于 `embyserver.nas.example.com`。主域名和泛域名可以使用两张独立证书，无需合并成一张多域名证书。
 
-Watchcow_R 根据证书实际 SAN 为应用建立明确的 SNI 映射，保留飞牛已有的主域名、FN Connect 和备用证书映射。每次同步会检查飞牛证书库；续期改变证书路径或原文件内容后，会更新引用并平滑重载 Nginx。申请和自动续期仍由飞牛负责。本应用不读取或复制私钥内容，不向 DNS 服务商申请权限，也不签发证书、不改变系统端口或自动降级 HTTPS。
+WatchCow_R 根据证书实际 SAN 为应用建立明确的 SNI 映射，保留飞牛已有的主域名、FN Connect 和备用证书映射。每次同步会检查飞牛证书库；续期改变证书路径或原文件内容后，会更新引用并平滑重载 Nginx。申请和自动续期仍由飞牛负责。本应用不读取或复制私钥内容，不向 DNS 服务商申请权限，也不签发证书、不改变系统端口或自动降级 HTTPS。
 
-合并后的映射保存在 Nginx 配置目录的 `watchcow-r-certificates.json`，供原生工作进程读取和监听；它只包含证书文件路径。所有权记录和回退日志保存在应用私有目录。证书接管将主配置的 `trim_cert_cfg_path` 指向这份映射，飞牛的原始证书库和映射文件保持不变。映射与反代规则一起校验、提交和恢复；卸载会恢复原始证书映射来源，外部修改会被保留并报告。
+合并后的映射保存在 Nginx 配置目录的 `watchcow-r-certificates.json`，供原生工作进程读取和监听；它只包含证书文件路径。所有权记录和回退日志保存在应用私有目录。飞牛重新生成 Nginx 目录导致自有映射文件丢失时，程序会核对保留的所有权记录，并从当前飞牛证书库重建映射；已存在但被外部修改的文件仍会保留并报告。证书接管将主配置的 `trim_cert_cfg_path` 指向这份映射，飞牛的原始证书库和映射文件保持不变。映射与反代规则一起校验、提交和恢复；卸载会恢复原始证书映射来源，外部修改会被保留并报告。
 
 浏览器当前访问端口必须已经指向飞牛 Nginx。通过额外外部网关转发时，需要让该网关同时接受这些子域名。仅配置 DNS 不会改变公网 IP、防火墙、端口转发或带宽。
 
+## 控制面板
+
+应用显示名统一为 **WatchCow_R**，管理页使用原版牛图标。容器管理和反代设置之间可通过带图标的按钮切换。两个页面自动跟随飞牛桌面的亮色、暗色设置；单独打开时读取当前站点保存的飞牛主题偏好，没有偏好则跟随操作系统，切换主题无需刷新。
+
+基础域名在首次安装向导中手动填写，默认留空；反代设置页读取已保存的值，也可在页面中修改。安装包不包含任何用户的实际域名、DNS 密钥或证书私钥。基础域名输入框与保存按钮保持等高对齐，窄屏下自动纵向排列。
+
 ## 扩展模式兼容性
 
-当前飞牛 Nginx 会在每次正常重载时恢复自带配置，清除自定义主配置 include 和 `conf.d` 文件。因此不能直接套用普通 Nginx 的配置方式。Watchcow_R 在明确授权后增加唯一的 systemd drop-in：
+当前飞牛 Nginx 会在每次正常重载时恢复自带配置，清除自定义主配置 include 和 `conf.d` 文件。因此不能直接套用普通 Nginx 的配置方式。WatchCow_R 在明确授权后增加唯一的 systemd drop-in：
 
 ```ini
 # /etc/systemd/system/trim_nginx.service.d/watchcow-r.conf
@@ -51,10 +57,10 @@ Environment=NGXMODE=dev
 - 导入原控制面板配置及能识别的 WatchCow 生成应用，包括当前停止的容器。
 - 完整生成包备份、原桌面文件、旧配置及 Nginx 原文件保存在 `/var/apps/watchcow-r/etc/backup/`。
 - 运行期间检测到旧 WatchCow 再次启动，会停止继续应用配置并提示冲突。请勿同时运行两个守护程序。
-- 停止 Watchcow_R 后，已有反代域名返回 503；业务容器保持原状态。
-- 停止并卸载 Watchcow_R 时，会移除自有 Nginx 扩展配置、恢复原入口及旧 WatchCow 原运行状态。若文件在接管后被其他程序修改，会保留修改并报告冲突，避免覆盖。
+- 停止 WatchCow_R 后，已有反代域名返回 503；业务容器保持原状态。
+- 停止并卸载 WatchCow_R 时，会移除自有 Nginx 扩展配置、恢复原入口及旧 WatchCow 原运行状态。若文件在接管后被其他程序修改，会保留修改并报告冲突，避免覆盖。
 
-需要手工回退时，先停止 Watchcow_R，再执行：
+需要手工回退时，先停止 WatchCow_R，再执行：
 
 ```bash
 TRIM_PKGETC=/var/apps/watchcow-r/etc \
@@ -112,7 +118,7 @@ flowchart LR
     CGI --> Browser[沿用浏览器协议与端口的子域名 URL]
     Browser --> Nginx[飞牛原生 Nginx]
     Nginx --> Docker[容器现有主机 TCP 映射]
-    Controller[Watchcow_R] -.发现和同步.-> Docker
+    Controller[WatchCow_R] -.发现和同步.-> Docker
     Controller -.配置与校验.-> Nginx
 ```
 
@@ -156,7 +162,7 @@ bash scripts/test-fnos-native.sh /root/.work/watchcow-r-test/native
 
 ## 自定义代理
 
-打开 Watchcow_R → 反向代理设置 → 对应应用的「编辑代理」。
+打开 WatchCow_R → 反向代理设置 → 对应应用的「编辑代理」。
 
 - **基本信息**：反代开关、子域名、后端地址/协议/端口、图标。
 - **自定义位置**：添加路径、目标 URL、位置内指令。后端 URL 的尾部斜杠遵循 [Nginx proxy_pass 的路径替换规则](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass)。

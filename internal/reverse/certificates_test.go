@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -287,5 +288,114 @@ func TestCertificateCrashRecoveryAndForeignEdit(t *testing.T) {
 				t.Fatal("crash recovery left staged mapping")
 			}
 		}
+	}
+}
+
+func TestCertificateMissingManagedMapRecovery(t *testing.T) {
+	for _, vendorReset := range []bool{false, true} {
+		for _, remove := range []bool{false, true} {
+			name := fmt.Sprintf("vendor-reset-%t-remove-%t", vendorReset, remove)
+			t.Run(name, func(t *testing.T) {
+				n, _, _, key := certificateNative(t)
+				originalMain := read(t, n.Main)
+				gateway, inventory, private := read(t, n.Certificates.Gateway), read(t, n.Certificates.Store), read(t, key)
+				routes := []Route{testRoute()}
+				if err := n.Apply(routes, false, false); err != nil {
+					t.Fatal(err)
+				}
+				mapPath := filepath.Join(filepath.Dir(n.Main), "watchcow-r-certificates.json")
+				statePath := filepath.Join(n.Dir, "certificates.owned.json")
+				if err := os.Remove(mapPath); err != nil {
+					t.Fatal(err)
+				}
+				if vendorReset {
+					write(t, n.Main, originalMain)
+					if err := os.Remove(filepath.Join(filepath.Dir(n.Main), "conf.d", "watchcow-r.conf")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := n.Apply(routes, remove, remove); err != nil {
+					t.Fatalf("missing owned file must not be treated as an external edit: %v", err)
+				}
+				if remove {
+					if !bytes.Equal(read(t, n.Main), originalMain) {
+						t.Fatal("removal did not restore vendor certificate source")
+					}
+					for _, path := range []string{mapPath, statePath} {
+						if _, err := os.Stat(path); !os.IsNotExist(err) {
+							t.Fatal("stale mapping ownership survived removal", path, err)
+						}
+					}
+				} else {
+					var state certificateOwnership
+					if err := json.Unmarshal(read(t, statePath), &state); err != nil {
+						t.Fatal(err)
+					}
+					if state.Path != mapPath || state.Hash != digest(read(t, mapPath)) {
+						t.Fatal("rebuilt mapping has inconsistent ownership")
+					}
+				}
+				if !bytes.Equal(gateway, read(t, n.Certificates.Gateway)) || !bytes.Equal(inventory, read(t, n.Certificates.Store)) || !bytes.Equal(private, read(t, key)) {
+					t.Fatal("recovery changed vendor certificate data")
+				}
+				n.Run = func(context.Context, string, ...string) error {
+					t.Error("repeating recovery must not reload unchanged configuration")
+					return nil
+				}
+				if err := n.Apply(routes, remove, remove); err != nil {
+					t.Fatal("repeated recovery", err)
+				}
+			})
+		}
+	}
+}
+
+func TestCertificateMissingMapRejectsUntrustedOwnership(t *testing.T) {
+	for _, kind := range []string{"missing", "malformed", "foreign-path", "invalid-hash"} {
+		t.Run(kind, func(t *testing.T) {
+			n, _, _, _ := certificateNative(t)
+			if err := n.Apply([]Route{testRoute()}, false, false); err != nil {
+				t.Fatal(err)
+			}
+			mapPath := filepath.Join(filepath.Dir(n.Main), "watchcow-r-certificates.json")
+			statePath := filepath.Join(n.Dir, "certificates.owned.json")
+			if err := os.Remove(mapPath); err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "missing":
+				if err := os.Remove(statePath); err != nil {
+					t.Fatal(err)
+				}
+			case "malformed":
+				write(t, statePath, []byte("broken JSON"))
+			case "foreign-path", "invalid-hash":
+				var state certificateOwnership
+				if err := json.Unmarshal(read(t, statePath), &state); err != nil {
+					t.Fatal(err)
+				}
+				if kind == "foreign-path" {
+					state.Path = "/external/mapping.json"
+				} else {
+					state.Hash = "invalid"
+				}
+				data, _ := json.Marshal(state)
+				write(t, statePath, data)
+			}
+			main := read(t, n.Main)
+			n.Run = func(context.Context, string, ...string) error {
+				t.Error("invalid ownership must not reload nginx")
+				return nil
+			}
+			if err := n.Apply([]Route{testRoute()}, false, false); err == nil {
+				t.Fatal("accepted untrusted ownership")
+			}
+			if !bytes.Equal(main, read(t, n.Main)) {
+				t.Fatal("invalid recovery changed main configuration")
+			}
+			if _, err := os.Stat(mapPath); !os.IsNotExist(err) {
+				t.Fatal("invalid recovery created mapping", err)
+			}
+		})
 	}
 }

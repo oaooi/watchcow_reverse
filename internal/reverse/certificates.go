@@ -47,6 +47,7 @@ type certificateOwnership struct {
 
 var certificateDirective = regexp.MustCompile(`(?m)^([\t ]*trim_cert_cfg_path[\t ]+)([^;\s]+)([\t ]*;)`)
 var certificateConfigPath = regexp.MustCompile(`^/[a-zA-Z0-9_./@+-]+$`)
+var certificateOwnedHash = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 // certificatePlan preserves all vendor bindings and adds exact SNI entries for
 // our routes. Exact entries are needed even when the certificate is a wildcard:
@@ -84,7 +85,11 @@ func (n *Native) certificatePlan(main []byte, routes []Route, remove bool) ([]by
 	}
 	if mapErr == nil || stateErr == nil || currentSource == path {
 		var owned certificateOwnership
-		if mapErr != nil || stateErr != nil || json.Unmarshal(state, &owned) != nil || owned.Path != path || owned.Hash != digest(oldMap) {
+		// fnOS can rebuild its Nginx directory while app-conf survives. A
+		// missing owned map has no foreign content to overwrite: regenerate it
+		// from the current vendor inventory, retaining the ownership checks.
+		// An existing map must still match the exact content we last wrote.
+		if stateErr != nil || json.Unmarshal(state, &owned) != nil || owned.Path != path || !certificateOwnedHash.MatchString(owned.Hash) || mapErr == nil && owned.Hash != digest(oldMap) {
 			return nil, nil, "", fmt.Errorf("Watchcow_R 证书映射发生外部修改，保留文件")
 		}
 	}
@@ -171,7 +176,7 @@ func (n *Native) certificatePlan(main []byte, routes []Route, remove bool) ([]by
 		}
 		revision.Write(data)
 		nextSource = path
-	} else if mapErr == nil {
+	} else if mapErr == nil || stateErr == nil {
 		for _, file := range []string{path, statePath} {
 			change, err := nativeChange(file, nil, 0600, true)
 			if err != nil {

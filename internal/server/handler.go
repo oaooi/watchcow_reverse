@@ -265,9 +265,12 @@ func (h *DashboardHandler) getContainerByID(ctx context.Context, id string) (*Co
 
 // dashboardData holds data for the main dashboard template.
 type dashboardData struct {
-	BulmaCSS template.CSS
-	ThemeCSS template.CSS
-	HtmxJS   template.JS
+	Logo      template.URL
+	SharedCSS template.CSS
+	ThemeJS   template.JS
+	BulmaCSS  template.CSS
+	ThemeCSS  template.CSS
+	HtmxJS    template.JS
 }
 
 // handleDashboard renders the main dashboard page.
@@ -291,10 +294,19 @@ func (h *DashboardHandler) handleDashboard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	logoBytes, err := web.Assets.ReadFile("images/watchcow.png")
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "加载应用图标失败")
+		return
+	}
+
 	data := dashboardData{
-		BulmaCSS: template.CSS(cssBytes),
-		ThemeCSS: template.CSS(themeBytes),
-		HtmxJS:   template.JS(htmxBytes),
+		Logo:      template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(logoBytes)),
+		SharedCSS: template.CSS(web.ThemeCSS),
+		ThemeJS:   template.JS(web.ThemeJS),
+		BulmaCSS:  template.CSS(cssBytes),
+		ThemeCSS:  template.CSS(themeBytes),
+		HtmxJS:    template.JS(htmxBytes),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

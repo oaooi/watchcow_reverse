@@ -3,6 +3,7 @@ package reverse
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"watchcow/internal/fpkgen"
+	"watchcow/web"
 )
 
 func token() (string, error) {
@@ -27,7 +29,7 @@ func token() (string, error) {
 	return hex.EncodeToString(b), err
 }
 
-var setup = template.Must(template.New("setup").Parse(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Watchcow_R</title><body style="max-width:760px;margin:60px auto;padding:24px;font:17px/1.8 system-ui"><h1>Watchcow_R 已安装</h1><p>此版本飞牛需要启用 Nginx 扩展模式才能保留反代配置。默认保持系统设置和原 WatchCow 的运行状态。</p><p>如果接受以下变化，请在应用中心打开 Watchcow_R 的配置，将「允许 Nginx 扩展模式」填写为 <code>true</code>：飞牛 Web 服务会重启一次，已有网页连接可能中断；扩展期间暂停 Nginx 配置自恢复，卸载时恢复。Docker 业务容器不会重启。</p><p>配置保存后将自动开始接管。请随后刷新本页，并在 DNS 中配置泛域名解析、在飞牛中配置覆盖子域名的 HTTPS 证书。</p></body></html>`))
+var setup = template.Must(template.New("setup").Parse(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WatchCow_R</title><body style="max-width:760px;margin:60px auto;padding:24px;font:17px/1.8 system-ui"><h1>WatchCow_R 已安装</h1><p>此版本飞牛需要启用 Nginx 扩展模式才能保留反代配置。默认保持系统设置和原 WatchCow 的运行状态。</p><p>如果接受以下变化，请在应用中心打开 WatchCow_R 的配置，将「允许 Nginx 扩展模式」填写为 <code>true</code>：飞牛 Web 服务会重启一次，已有网页连接可能中断；扩展期间暂停 Nginx 配置自恢复，卸载时恢复。Docker 业务容器不会重启。</p><p>配置保存后将自动开始接管。请随后刷新本页，并在 DNS 中配置泛域名解析、在飞牛中配置覆盖子域名的 HTTPS 证书。</p></body></html>`))
 
 func (m *Manager) SetupPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -35,7 +37,7 @@ func (m *Manager) SetupPage(w http.ResponseWriter, r *http.Request) {
 	_ = setup.Execute(w, nil)
 }
 
-var launcher = template.Must(template.New("launcher").Parse(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Watchcow_R</title><script>
+var launcher = template.Must(template.New("launcher").Parse(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>WatchCow_R</title><script>
 const target = new URL(window.location.href);
 target.hostname = {{.Host}};
 const appPath = new URL({{.Path}}, window.location.origin);
@@ -73,7 +75,7 @@ func (m *Manager) Launch(w http.ResponseWriter, r *http.Request) {
 	problem := m.lastError
 	m.mu.Unlock()
 	if route.Host == "" || !applied || problem != "" {
-		http.Error(w, "Watchcow_R 反代尚未就绪，请查看管理员控制面板", http.StatusServiceUnavailable)
+		http.Error(w, "WatchCow_R 反代尚未就绪，请查看管理员控制面板", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -91,6 +93,8 @@ type panelRow struct {
 }
 
 type panelData struct {
+	SharedCSS                    template.CSS
+	ThemeJS                      template.JS
 	Domain, CSRF, Error, Applied string
 	DesktopError, DesktopCurrent string
 	Rows                         []panelRow
@@ -122,10 +126,18 @@ func (m *Manager) Panel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// fnOS enforces administrator access on this root package's CGI entry.
-		// Reject cross-origin form submissions as an additional CSRF safeguard.
+		// fnOS's CGI gateway can rewrite Host (including stripping the public
+		// port). A same-origin fetch proves access to the panel token in a custom
+		// header; cross-origin pages cannot send that header without CORS approval.
+		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+			http.Error(w, "无效来源", 403)
+			return
+		}
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
-			if err != nil || u.Host != r.Host {
+			validOrigin := err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == ""
+			panelToken := r.Header.Get("X-Watchcow-R-CSRF")
+			if !validOrigin || u.Host != r.Host && subtle.ConstantTimeCompare([]byte(panelToken), []byte(m.csrf)) != 1 {
 				http.Error(w, "无效来源", 403)
 				return
 			}
@@ -284,7 +296,7 @@ func (m *Manager) Panel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.mu.Lock()
-	data := panelData{Domain: m.settings.Domain, CSRF: m.csrf, Error: m.lastError, Applied: m.lastApply.Format("2006-01-02 15:04:05")}
+	data := panelData{SharedCSS: template.CSS(web.ThemeCSS), ThemeJS: template.JS(web.ThemeJS), Domain: m.settings.Domain, CSRF: m.csrf, Error: m.lastError, Applied: m.lastApply.Format("2006-01-02 15:04:05")}
 	data.DesktopError, data.DesktopCurrent = m.desktopError, m.desktopCurrent
 	m.loadIcons()
 	for _, route := range m.rows {

@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Watchcow_R 控制面板</title>
+    <title>WatchCow_R 控制面板</title>
+    <script>{{.ThemeJS}}</script>
     <style>{{.BulmaCSS}}</style>
+    <style>{{.SharedCSS}}</style>
     <style>{{.ThemeCSS}}</style>
     <script>{{.HtmxJS}}</script>
 </head>
@@ -12,13 +14,13 @@
     <header class="dashboard-topbar">
         <div class="dashboard-container dashboard-topbar-inner">
             <div class="brand-lockup">
-                <div class="brand-mark" aria-hidden="true">W</div>
+                <img class="brand-mark" src="{{.Logo}}" alt="WatchCow 牛图标" width="36" height="36">
                 <div>
-                    <h1 class="brand-name">Watchcow_R</h1>
+                    <h1 class="brand-name">WatchCow_R</h1>
                     <p class="brand-context">容器应用管理</p>
                 </div>
             </div>
-            <div class="topbar-meta"><a href="reverse">反向代理设置</a></div>
+            <div class="topbar-meta"><a class="wc-nav-link" href="reverse"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h13m-4-4 4 4-4 4M20 17H7m4-4-4 4 4 4"/></svg><span>反向代理设置</span></a></div>
         </div>
     </header>
     <main class="dashboard-main">
